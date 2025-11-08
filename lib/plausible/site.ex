@@ -29,6 +29,7 @@ defmodule Plausible.Site do
 
     field :domain_changed_from, :string
     field :domain_changed_at, :naive_datetime
+    field :tags, {:array, :string}, default: []
 
     # NOTE: needed by `SiteImports` data migration script
     embeds_one :imported_data, Plausible.Site.ImportedData, on_replace: :update
@@ -136,6 +137,24 @@ defmodule Plausible.Site do
       greater_than_or_equal_to: 0,
       message: "must be empty, zero or positive"
     )
+  end
+
+  def tag_changeset(site, attrs \\ %{}) do
+    site
+    |> cast(attrs, [:tags])
+    |> validate_tags()
+  end
+
+  defp validate_tags(changeset) do
+    changeset
+    |> validate_length(:tags, max: 10, message: "can have at most 10 tags")
+    |> update_change(:tags, fn tags ->
+      tags
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+      |> Enum.take(10)
+    end)
   end
 
   def tz_offset(site, utc_now \\ DateTime.utc_now()) do

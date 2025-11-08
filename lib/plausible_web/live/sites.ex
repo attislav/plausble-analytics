@@ -21,6 +21,9 @@ defmodule PlausibleWeb.Live.Sites do
         Plausible.Teams.Invitations.all(socket.assigns.current_user)
       )
       |> assign(:filter_text, params["filter_text"] || "")
+      |> assign(:tag_modal_open, false)
+      |> assign(:selected_site_for_tags, nil)
+      |> assign(:tag_input, "")
 
     {:ok, socket}
   end
@@ -109,6 +112,11 @@ defmodule PlausibleWeb.Live.Sites do
           Total of <span class="font-medium">{@sites.total_entries}</span> sites
         </.pagination>
         <.invitation_modal :if={Enum.any?(@sites.entries, &(&1.entry_type == "invitation"))} />
+        <.tag_modal
+          :if={@tag_modal_open && @selected_site_for_tags}
+          site={@selected_site_for_tags}
+          tag_input={@tag_input}
+        />
       </div>
     </div>
     """
@@ -220,6 +228,7 @@ defmodule PlausibleWeb.Live.Sites do
               >
                 {@site.domain}
               </h3>
+              <.site_tags :if={@site.tags && @site.tags != []} tags={@site.tags} />
             </div>
           </div>
           <.site_stats hourly_stats={@hourly_stats} />
@@ -273,6 +282,18 @@ defmodule PlausibleWeb.Live.Sites do
           <.icon_pin :if={!@site.pinned_at} class="size-4" />
           <span :if={!@site.pinned_at}>Pin Site</span>
         </.dropdown_item>
+
+        <.dropdown_item
+          :if={List.first(@site.memberships).role in [:owner, :admin]}
+          href="#"
+          x-on:click.prevent
+          phx-click="open-tag-modal"
+          phx-value-domain={@site.domain}
+          class="!flex items-center gap-x-2"
+        >
+          <Heroicons.tag class="size-4" />
+          <span>Manage Tags</span>
+        </.dropdown_item>
       </:menu>
     </.dropdown>
     """
@@ -292,6 +313,20 @@ defmodule PlausibleWeb.Live.Sites do
     >
       <path d="M9.828.722a.5.5 0 0 1 .354.146l4.95 4.95a.5.5 0 0 1 0 .707c-.48.48-1.072.588-1.503.588-.177 0-.335-.018-.46-.039l-3.134 3.134a5.927 5.927 0 0 1 .16 1.013c.046.702-.032 1.687-.72 2.375a.5.5 0 0 1-.707 0l-2.829-2.828-3.182 3.182c-.195.195-1.219.902-1.414.707-.195-.195.512-1.22.707-1.414l3.182-3.182-2.828-2.829a.5.5 0 0 1 0-.707c.688-.688 1.673-.767 2.375-.72a5.922 5.922 0 0 1 1.013.16l3.134-3.133a2.772 2.772 0 0 1-.04-.461c0-.43.108-1.022.589-1.503a.5.5 0 0 1 .353-.146z" />
     </svg>
+    """
+  end
+
+  attr(:tags, :list, required: true)
+
+  def site_tags(assigns) do
+    ~H"""
+    <div class="flex flex-wrap gap-1 mt-1">
+      <%= for tag <- @tags do %>
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+          {tag}
+        </span>
+      <% end %>
+    </div>
     """
   end
 
@@ -577,6 +612,83 @@ defmodule PlausibleWeb.Live.Sites do
     """
   end
 
+  attr(:site, Plausible.Site, required: true)
+  attr(:tag_input, :string, required: true)
+
+  def tag_modal(assigns) do
+    ~H"""
+    <div
+      class="fixed z-10 inset-0 overflow-y-auto"
+      phx-window-keydown="close-tag-modal"
+      phx-key="escape"
+    >
+      <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+        <div
+          class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+          phx-click="close-tag-modal"
+        >
+        </div>
+
+        <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+
+        <div class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6">
+          <div class="mb-4">
+            <h3 class="text-lg leading-6 font-medium text-gray-900 dark:text-gray-100">
+              Manage Tags for {@site.domain}
+            </h3>
+          </div>
+
+          <div class="mb-4">
+            <div class="flex flex-wrap gap-2 mb-3">
+              <%= for tag <- @site.tags || [] do %>
+                <span class="inline-flex items-center gap-x-1 px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+                  {tag}
+                  <button
+                    phx-click="remove-tag"
+                    phx-value-domain={@site.domain}
+                    phx-value-tag={tag}
+                    class="hover:text-indigo-600 dark:hover:text-indigo-400"
+                  >
+                    <Heroicons.x_mark class="size-4" />
+                  </button>
+                </span>
+              <% end %>
+            </div>
+
+            <form phx-submit="add-tag" class="flex gap-2">
+              <input
+                type="text"
+                name="tag"
+                value={@tag_input}
+                phx-change="update-tag-input"
+                placeholder="Add new tag..."
+                class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 rounded-md"
+              />
+              <input type="hidden" name="domain" value={@site.domain} />
+              <button
+                type="submit"
+                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                Add
+              </button>
+            </form>
+          </div>
+
+          <div class="mt-5 sm:mt-6">
+            <button
+              phx-click="close-tag-modal"
+              type="button"
+              class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-gray-600 text-base font-medium text-white hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 sm:text-sm"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
   def handle_event("pin-toggle", %{"domain" => domain}, socket) do
     site = Enum.find(socket.assigns.sites.entries, &(&1.domain == domain))
 
@@ -644,6 +756,82 @@ defmodule PlausibleWeb.Live.Sites do
       socket
       |> reset_pagination()
       |> set_filter_text("")
+
+    {:noreply, socket}
+  end
+
+  def handle_event("open-tag-modal", %{"domain" => domain}, socket) do
+    site = Enum.find(socket.assigns.sites.entries, &(&1.domain == domain))
+
+    socket =
+      if site do
+        socket
+        |> assign(:tag_modal_open, true)
+        |> assign(:selected_site_for_tags, site)
+        |> assign(:tag_input, "")
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("close-tag-modal", _params, socket) do
+    socket =
+      socket
+      |> assign(:tag_modal_open, false)
+      |> assign(:selected_site_for_tags, nil)
+      |> assign(:tag_input, "")
+
+    {:noreply, socket}
+  end
+
+  def handle_event("update-tag-input", %{"tag" => tag}, socket) do
+    {:noreply, assign(socket, :tag_input, tag)}
+  end
+
+  def handle_event("add-tag", %{"domain" => domain, "tag" => tag}, socket) do
+    tag = String.trim(tag)
+
+    socket =
+      if tag != "" do
+        site = Sites.get_by_domain!(domain)
+
+        case Sites.add_tag(socket.assigns.current_user, site, tag) do
+          {:ok, _updated_site} ->
+            socket
+            |> put_live_flash(:success, "Tag added successfully")
+            |> assign(:tag_input, "")
+            |> load_sites()
+
+          {:error, changeset} ->
+            error_message =
+              changeset.errors
+              |> Enum.map(fn {field, {msg, _}} -> "#{field}: #{msg}" end)
+              |> Enum.join(", ")
+
+            put_live_flash(socket, :error, "Failed to add tag: #{error_message}")
+        end
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("remove-tag", %{"domain" => domain, "tag" => tag}, socket) do
+    site = Sites.get_by_domain!(domain)
+
+    socket =
+      case Sites.remove_tag(socket.assigns.current_user, site, tag) do
+        {:ok, _updated_site} ->
+          socket
+          |> put_live_flash(:success, "Tag removed successfully")
+          |> load_sites()
+
+        {:error, _changeset} ->
+          put_live_flash(socket, :error, "Failed to remove tag")
+      end
 
     {:noreply, socket}
   end
