@@ -29,7 +29,7 @@ defmodule Plausible.Ingestion.RequestTest do
     }
 
     conn = build_conn(:post, "/api/events", payload)
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, %Plug.Conn{}} = Request.build(conn)
 
     assert request.domains == ["dummy.site"]
     assert request.event_name == "pageview"
@@ -52,9 +52,9 @@ defmodule Plausible.Ingestion.RequestTest do
 
     conn = build_conn(:post, "/api/events", payload)
 
-    assert {:ok, request1} = Request.build(conn)
+    assert {:ok, request1, _conn} = Request.build(conn)
     :timer.sleep(1500)
-    assert {:ok, request2} = Request.build(conn)
+    assert {:ok, request2, _conn} = Request.build(conn)
 
     ts1 = request1.timestamp
     ts2 = request2.timestamp
@@ -70,7 +70,7 @@ defmodule Plausible.Ingestion.RequestTest do
     }
 
     conn = build_conn(:post, "/api/events", payload)
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert request.domains == ["dummy.site"]
     assert request.uri.host == "dummy.site"
   end
@@ -83,7 +83,7 @@ defmodule Plausible.Ingestion.RequestTest do
     }
 
     conn = build_conn(:post, "/api/events", payload)
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert request.domains == ["dummy.site"]
     assert request.uri.host == "dummy.site"
   end
@@ -96,7 +96,7 @@ defmodule Plausible.Ingestion.RequestTest do
     }
 
     conn = build_conn(:post, "/api/events", payload)
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert request.domains == ["dummy.site", "crash.site"]
     assert request.uri.host == "dummy.site"
   end
@@ -109,7 +109,7 @@ defmodule Plausible.Ingestion.RequestTest do
     }
 
     conn = build_conn(:post, "/api/events", payload)
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert request.event_name == "404"
   end
 
@@ -121,7 +121,7 @@ defmodule Plausible.Ingestion.RequestTest do
     }
 
     conn = build_conn(:post, "/api/events", payload)
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert request.hostname == "(none)"
   end
 
@@ -133,7 +133,7 @@ defmodule Plausible.Ingestion.RequestTest do
     }
 
     conn = build_conn(:post, "/api/events", payload)
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert request.hostname == "dummy.site"
   end
 
@@ -145,7 +145,7 @@ defmodule Plausible.Ingestion.RequestTest do
     }
 
     conn = build_conn(:post, "/api/events", payload) |> put_req_header("user-agent", "Mozilla")
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert request.user_agent == "Mozilla"
   end
 
@@ -159,16 +159,18 @@ defmodule Plausible.Ingestion.RequestTest do
       props: %{
         "custom1" => "property1",
         "custom2" => "property2"
-      }
+      },
+      v: 137
     }
 
     conn = build_conn(:post, "/api/events", payload)
 
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert request.referrer == "https://example.com"
     assert request.hash_mode == 1
     assert request.props["custom1"] == "property1"
     assert request.props["custom2"] == "property2"
+    assert request.tracker_script_version == 137
   end
 
   @tag :ee_only
@@ -182,7 +184,7 @@ defmodule Plausible.Ingestion.RequestTest do
 
     conn = build_conn(:post, "/api/events", payload)
 
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert %Money{amount: amount, currency: :EUR} = request.revenue_source
     assert Decimal.new("20.2") == amount
   end
@@ -201,7 +203,7 @@ defmodule Plausible.Ingestion.RequestTest do
 
     conn = build_conn(:post, "/api/events", payload)
 
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert %Money{amount: amount, currency: :USD} = request.revenue_source
     assert Decimal.equal?(amount, Decimal.new("20.0"))
   end
@@ -220,7 +222,7 @@ defmodule Plausible.Ingestion.RequestTest do
 
     conn = build_conn(:post, "/api/events", payload)
 
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert %Money{amount: amount, currency: :USD} = request.revenue_source
     assert Decimal.equal?(amount, Decimal.new("20.1"))
   end
@@ -239,7 +241,7 @@ defmodule Plausible.Ingestion.RequestTest do
 
     conn = build_conn(:post, "/api/events", payload)
 
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert %Money{amount: amount, currency: :USD} = request.revenue_source
     assert Decimal.equal?(amount, Decimal.new("12.3"))
   end
@@ -257,7 +259,7 @@ defmodule Plausible.Ingestion.RequestTest do
     }
 
     conn = build_conn(:post, "/api/events", payload)
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert is_nil(request.revenue_source)
   end
 
@@ -270,7 +272,7 @@ defmodule Plausible.Ingestion.RequestTest do
 
     conn = build_conn(:post, "/api/events", payload)
 
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
 
     assert request.pathname == "/pictures/index.html"
   end
@@ -285,9 +287,58 @@ defmodule Plausible.Ingestion.RequestTest do
 
     conn = build_conn(:post, "/api/events", payload)
 
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
 
     assert request.pathname == "/pictures/index.html#foo"
+  end
+
+  for event_name <- Plausible.Goals.SystemGoals.goals_with_path() do
+    test "event.props.path is synced from event.pathname for special path-based event '#{event_name}'" do
+      payload = %{
+        name: unquote(event_name),
+        domain: "dummy.site",
+        url: "http://dummy.site/pictures/index.html#foo"
+      }
+
+      conn = build_conn(:post, "/api/events", payload)
+
+      assert {:ok, request, _conn} = Request.build(conn)
+
+      assert request.pathname == "/pictures/index.html"
+      assert request.props == %{"path" => "/pictures/index.html"}
+    end
+
+    test "event.props.path is synced from event.pathname for special path-based event '#{event_name}' with hashMode" do
+      payload = %{
+        name: unquote(event_name),
+        domain: "dummy.site",
+        url: "http://dummy.site/pictures/index.html#foo",
+        hashMode: 1
+      }
+
+      conn = build_conn(:post, "/api/events", payload)
+
+      assert {:ok, request, _conn} = Request.build(conn)
+
+      assert request.pathname == "/pictures/index.html#foo"
+      assert request.props == %{"path" => "/pictures/index.html#foo"}
+    end
+
+    test "event.props.path is not synced from event.pathname for special path-based event '#{event_name}' if it's set explicitly (legacy support)" do
+      payload = %{
+        name: unquote(event_name),
+        domain: "dummy.site",
+        url: "http://dummy.site/pictures/index.html#foo",
+        props: %{"path" => "/album"}
+      }
+
+      conn = build_conn(:post, "/api/events", payload)
+
+      assert {:ok, request, _conn} = Request.build(conn)
+
+      assert request.pathname == "/pictures/index.html"
+      assert request.props == %{"path" => "/album"}
+    end
   end
 
   test "query params are set" do
@@ -299,7 +350,7 @@ defmodule Plausible.Ingestion.RequestTest do
 
     conn = build_conn(:post, "/api/events", payload)
 
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert request.query_params["foo"] == "bar"
     assert request.query_params["baz"] == "bam"
   end
@@ -373,7 +424,7 @@ defmodule Plausible.Ingestion.RequestTest do
     }
 
     conn = build_conn(:post, "/api/events", payload)
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert request.referrer == String.duplicate("a", 2000)
   end
 
@@ -419,7 +470,7 @@ defmodule Plausible.Ingestion.RequestTest do
 
     conn = build_conn(:post, "/api/events", payload)
 
-    assert {:ok, request} = Request.build(conn)
+    assert {:ok, request, _conn} = Request.build(conn)
     assert map_size(request.props) == 30
   end
 
@@ -443,7 +494,7 @@ defmodule Plausible.Ingestion.RequestTest do
       |> build_conn("/api/events", payload)
       |> Request.build()
 
-    assert {:ok, _} = within_read_limit
+    assert {:ok, _, _} = within_read_limit
 
     exceeding_read_limit =
       :post
@@ -452,6 +503,22 @@ defmodule Plausible.Ingestion.RequestTest do
       |> Request.build()
 
     assert {:error, _} = exceeding_read_limit
+  end
+
+  test "respects interactive parameter" do
+    params = %{
+      name: "pageview",
+      domain: "dummy.site",
+      url: "http://dummy.site/index.html",
+      interactive: false
+    }
+
+    assert {:ok, request, _conn} =
+             build_conn(:post, "/api/events", params)
+             |> put_req_header("user-agent", "Mozilla")
+             |> Request.build()
+
+    refute request.interactive?
   end
 
   @tag :ee_only
@@ -469,7 +536,7 @@ defmodule Plausible.Ingestion.RequestTest do
       }
     }
 
-    assert {:ok, request} =
+    assert {:ok, request, _conn} =
              build_conn(:post, "/api/events", params)
              |> put_req_header("user-agent", "Mozilla")
              |> Request.build()
@@ -491,9 +558,87 @@ defmodule Plausible.Ingestion.RequestTest do
              "user_agent" => "Mozilla",
              "ip_classification" => nil,
              "scroll_depth" => nil,
-             "engagement_time" => nil
+             "engagement_time" => nil,
+             "tracker_script_version" => 0,
+             "interactive?" => true
            }
 
     assert %NaiveDateTime{} = NaiveDateTime.from_iso8601!(request["timestamp"])
+  end
+
+  describe "engagement event" do
+    test "fails validation if no engagement metrics are present or are invalid" do
+      [%{}, %{sd: -1}, %{e: "abc"}, %{sd: "null", e: "null"}]
+      |> Enum.each(fn invalid_param_set ->
+        assert {:error, changeset} = build_engagement_request(invalid_param_set)
+        assert {msg, _} = changeset.errors[:event_name]
+        assert msg == Request.blank_engagement_error_message()
+      end)
+    end
+
+    test "sets valid scroll_depth" do
+      assert {:ok, %Request{scroll_depth: 0}, _conn} = build_engagement_request(%{sd: 0})
+      assert {:ok, %Request{scroll_depth: 25}, _conn} = build_engagement_request(%{sd: 25})
+      assert {:ok, %Request{scroll_depth: 25}, _conn} = build_engagement_request(%{sd: "25"})
+    end
+
+    test "scroll_depth defaults to 100 when given integer is greater than 100" do
+      assert {:ok, %Request{scroll_depth: 100}, _conn} = build_engagement_request(%{sd: 101})
+      assert {:ok, %Request{scroll_depth: 100}, _conn} = build_engagement_request(%{sd: "101"})
+    end
+
+    test "scroll_depth defaults to 255 when given value is invalid or missing" do
+      assert {:ok, %Request{scroll_depth: 255}, _conn} = build_engagement_request(%{sd: -1, e: 1})
+
+      assert {:ok, %Request{scroll_depth: 255}, _conn} =
+               build_engagement_request(%{sd: "abc", e: 1})
+
+      assert {:ok, %Request{scroll_depth: 255}, _conn} = build_engagement_request(%{e: 1})
+    end
+
+    test "sets valid engagement_time" do
+      assert {:ok, %Request{engagement_time: 123}, _conn} = build_engagement_request(%{e: 123})
+      assert {:ok, %Request{engagement_time: 123}, _conn} = build_engagement_request(%{e: "123"})
+    end
+
+    test "engagement_time defaults to 0 when given value is invalid or missing" do
+      assert {:ok, %Request{engagement_time: 0}, _conn} =
+               build_engagement_request(%{sd: 1, e: -1})
+
+      assert {:ok, %Request{engagement_time: 0}, _conn} =
+               build_engagement_request(%{sd: 1, e: "abc"})
+
+      assert {:ok, %Request{engagement_time: 0}, _conn} =
+               build_engagement_request(%{sd: 1, e: Request.too_large_engagement_time()})
+    end
+
+    test "sd and e fields are ignored if name is not engagement" do
+      params = %{name: "pageview", domain: "site.com", url: "https://site.com", sd: 25, e: 1000}
+
+      assert {:ok, %Request{engagement_time: nil, scroll_depth: nil}, _conn} =
+               build_conn(:post, "/api/events", params)
+               |> Request.build()
+
+      assert {:ok, %Request{engagement_time: nil, scroll_depth: nil}, _conn} =
+               build_conn(:post, "/api/events", Map.put(params, :name, "Custom Event"))
+               |> Request.build()
+    end
+
+    test "ingests valid scroll_depth and engagement_time for the same request" do
+      assert {:ok, %Request{scroll_depth: 23, engagement_time: 100}, _conn} =
+               build_engagement_request(%{sd: 23, e: 100})
+
+      assert {:ok, %Request{scroll_depth: 23, engagement_time: 100}, _conn} =
+               build_engagement_request(%{sd: "23", e: "100"})
+    end
+  end
+
+  defp build_engagement_request(extra_params) do
+    params =
+      %{name: "engagement", domain: "dummy.site", url: "https://dummy.site/"}
+      |> Map.merge(extra_params)
+
+    build_conn(:post, "/api/events", params)
+    |> Request.build()
   end
 end

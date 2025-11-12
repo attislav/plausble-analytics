@@ -5,6 +5,8 @@ defmodule Plausible.Workers.LockSitesTest do
   alias Plausible.Workers.LockSites
   alias Plausible.Billing.Subscription
 
+  @moduletag :ee_only
+
   test "does not lock enterprise site on grace period" do
     user = new_user()
     site = new_site(owner: user)
@@ -15,7 +17,7 @@ defmodule Plausible.Workers.LockSitesTest do
 
     LockSites.perform(nil)
 
-    refute Repo.reload!(site).locked
+    refute Repo.reload!(site.team).locked
   end
 
   test "does not lock trial user's site" do
@@ -24,7 +26,7 @@ defmodule Plausible.Workers.LockSitesTest do
 
     LockSites.perform(nil)
 
-    refute Repo.reload!(site).locked
+    refute Repo.reload!(site.team).locked
   end
 
   test "locks site for user whose trial has expired" do
@@ -33,7 +35,7 @@ defmodule Plausible.Workers.LockSitesTest do
 
     LockSites.perform(nil)
 
-    assert Repo.reload!(site).locked
+    assert Repo.reload!(site.team).locked
   end
 
   test "does not lock active subsriber's sites" do
@@ -42,7 +44,7 @@ defmodule Plausible.Workers.LockSitesTest do
 
     LockSites.perform(nil)
 
-    refute Repo.reload!(site).locked
+    refute Repo.reload!(site.team).locked
   end
 
   test "does not lock user who is past due" do
@@ -51,7 +53,7 @@ defmodule Plausible.Workers.LockSitesTest do
 
     LockSites.perform(nil)
 
-    refute Repo.reload!(site).locked
+    refute Repo.reload!(site.team).locked
   end
 
   test "does not lock user who cancelled subscription but it hasn't expired yet" do
@@ -60,7 +62,7 @@ defmodule Plausible.Workers.LockSitesTest do
 
     LockSites.perform(nil)
 
-    refute Repo.reload!(site).locked
+    refute Repo.reload!(site.team).locked
   end
 
   test "locks user who cancelled subscription and the cancelled subscription has expired" do
@@ -75,7 +77,7 @@ defmodule Plausible.Workers.LockSitesTest do
 
     LockSites.perform(nil)
 
-    assert Repo.reload!(site).locked
+    assert Repo.reload!(site.team).locked
   end
 
   test "does not lock if user has an old cancelled subscription and a new active subscription" do
@@ -92,7 +94,7 @@ defmodule Plausible.Workers.LockSitesTest do
 
     LockSites.perform(nil)
 
-    refute Repo.reload!(site).locked
+    refute Repo.reload!(site.team).locked
   end
 
   describe "locking" do
@@ -105,11 +107,8 @@ defmodule Plausible.Workers.LockSitesTest do
 
       LockSites.perform(nil)
 
-      owner_site = Repo.reload!(owner_site)
-      viewer_site = Repo.reload!(viewer_site)
-
-      assert owner_site.locked
-      refute viewer_site.locked
+      assert Repo.reload!(owner_site.team).locked
+      refute Repo.reload!(viewer_site.team).locked
     end
   end
 end

@@ -13,9 +13,27 @@ defmodule Plausible.Application do
     # in CE we start the endpoint under site_encrypt for automatic https
     endpoint = on_ee(do: PlausibleWeb.Endpoint, else: maybe_https_endpoint())
 
+    cluster =
+      on_ee(
+        do:
+          {Cluster.Supervisor,
+           [
+             [
+               default: [
+                 strategy: Cluster.Strategy.ErlangHosts,
+                 config: [timeout: 30_000]
+               ]
+             ],
+             [name: Plausible.ClusterSupervisor]
+           ]}
+      )
+
     children =
       [
-        Plausible.Cache.Stats,
+        cluster,
+        {PartitionSupervisor,
+         child_spec: Task.Supervisor, name: Plausible.UserAgentParseTaskSupervisor},
+        Plausible.Session.BalancerSupervisor,
         Plausible.PromEx,
         {Plausible.Auth.TOTP.Vault, key: totp_vault_key()},
         Plausible.Repo,
@@ -25,20 +43,29 @@ defmodule Plausible.Application do
         Plausible.ImportDeletionRepo,
         Plausible.Cache.Adapter.child_spec(:customer_currency, :cache_customer_currency,
           ttl_check_interval: :timer.minutes(5),
+          n_lock_partitions: 1,
           global_ttl: :timer.minutes(60)
         ),
         Plausible.Cache.Adapter.child_spec(:user_agents, :cache_user_agents,
           ttl_check_interval: :timer.minutes(5),
           global_ttl: :timer.minutes(60),
+          n_lock_partitions: 1,
           ets_options: [read_concurrency: true, write_concurrency: true]
         ),
         Plausible.Cache.Adapter.child_specs(:sessions, :cache_sessions,
           ttl_check_interval: :timer.seconds(10),
           global_ttl: :timer.minutes(30),
+          n_lock_partitions: 1,
           ets_options: [read_concurrency: true, write_concurrency: true]
         ),
+        {Plausible.Session.Transfer,
+         base_path: Application.get_env(:plausible, :session_transfer_dir)},
         warmed_cache(Plausible.Site.Cache,
-          adapter_opts: [ttl_check_interval: false, ets_options: [read_concurrency: true]],
+          adapter_opts: [
+            n_lock_partitions: 1,
+            ttl_check_interval: false,
+            ets_options: [read_concurrency: true]
+          ],
           warmers: [
             refresh_all:
               {Plausible.Site.Cache.All,
@@ -47,8 +74,28 @@ defmodule Plausible.Application do
               {Plausible.Site.Cache.RecentlyUpdated, interval: :timer.seconds(30)}
           ]
         ),
+        on_ee do
+          warmed_cache(Plausible.ConsolidatedView.Cache,
+            adapter_opts: [
+              n_lock_partitions: 1,
+              ttl_check_interval: false,
+              ets_options: [read_concurrency: true]
+            ],
+            warmers: [
+              refresh_all:
+                {Plausible.ConsolidatedView.Cache.All,
+                 interval: :timer.minutes(20) + Enum.random(1..:timer.seconds(10))},
+              refresh_updated_recently:
+                {Plausible.ConsolidatedView.Cache.RecentlyUpdated, interval: :timer.minutes(1)}
+            ]
+          )
+        end,
         warmed_cache(Plausible.Shield.IPRuleCache,
-          adapter_opts: [ttl_check_interval: false, ets_options: [read_concurrency: true]],
+          adapter_opts: [
+            n_lock_partitions: 1,
+            ttl_check_interval: false,
+            ets_options: [read_concurrency: true]
+          ],
           warmers: [
             refresh_all:
               {Plausible.Shield.IPRuleCache.All,
@@ -58,7 +105,11 @@ defmodule Plausible.Application do
           ]
         ),
         warmed_cache(Plausible.Shield.CountryRuleCache,
-          adapter_opts: [ttl_check_interval: false, ets_options: [read_concurrency: true]],
+          adapter_opts: [
+            n_lock_partitions: 1,
+            ttl_check_interval: false,
+            ets_options: [read_concurrency: true]
+          ],
           warmers: [
             refresh_all:
               {Plausible.Shield.CountryRuleCache.All,
@@ -68,7 +119,11 @@ defmodule Plausible.Application do
           ]
         ),
         warmed_cache(Plausible.Shield.PageRuleCache,
-          adapter_opts: [ttl_check_interval: false, ets_options: [:bag, read_concurrency: true]],
+          adapter_opts: [
+            n_lock_partitions: 1,
+            ttl_check_interval: false,
+            ets_options: [:bag, read_concurrency: true]
+          ],
           warmers: [
             refresh_all:
               {Plausible.Shield.PageRuleCache.All,
@@ -78,7 +133,11 @@ defmodule Plausible.Application do
           ]
         ),
         warmed_cache(Plausible.Shield.HostnameRuleCache,
-          adapter_opts: [ttl_check_interval: false, ets_options: [:bag, read_concurrency: true]],
+          adapter_opts: [
+            n_lock_partitions: 1,
+            ttl_check_interval: false,
+            ets_options: [:bag, read_concurrency: true]
+          ],
           warmers: [
             refresh_all:
               {Plausible.Shield.HostnameRuleCache.All,
@@ -89,7 +148,11 @@ defmodule Plausible.Application do
         ),
         on_ee do
           warmed_cache(Plausible.Stats.SamplingCache,
-            adapter_opts: [ttl_check_interval: false, read_concurrency: true],
+            adapter_opts: [
+              n_lock_partitions: 1,
+              ttl_check_interval: false,
+              read_concurrency: true
+            ],
             warmers: [
               refresh_all:
                 {Plausible.Stats.SamplingCache.All,
@@ -97,6 +160,20 @@ defmodule Plausible.Application do
             ]
           )
         end,
+        warmed_cache(PlausibleWeb.TrackerScriptCache,
+          adapter_opts: [
+            n_lock_partitions: 1,
+            ttl_check_interval: false,
+            ets_options: [:bag, read_concurrency: true]
+          ],
+          warmers: [
+            refresh_all:
+              {PlausibleWeb.TrackerScriptCache.All,
+               interval: :timer.minutes(180) + Enum.random(1..:timer.seconds(10))},
+            refresh_updated_recently:
+              {PlausibleWeb.TrackerScriptCache.RecentlyUpdated, interval: :timer.seconds(30)}
+          ]
+        ),
         Plausible.Ingestion.Counters,
         Plausible.Session.Salts,
         Supervisor.child_spec(Plausible.Event.WriteBuffer, id: Plausible.Event.WriteBuffer),
@@ -119,10 +196,10 @@ defmodule Plausible.Application do
     setup_request_logging()
     setup_sentry()
     setup_opentelemetry()
+    Plausible.Ingestion.Persistor.TelemetryHandler.install()
 
     setup_geolocation()
     Location.load_all()
-    Plausible.Ingestion.Source.init()
     Plausible.Geo.await_loader()
 
     Supervisor.start_link(List.flatten(children), opts)
@@ -168,6 +245,7 @@ defmodule Plausible.Application do
       "https://icons.duckduckgo.com",
       Config.Reader.merge(default_opts, conn_opts: [transport_opts: [timeout: 15_000]])
     )
+    |> maybe_add_persistor_pool(default_opts)
     |> maybe_add_sentry_pool(default_opts)
     |> maybe_add_paddle_pool(default_opts)
     |> maybe_add_google_pools(default_opts)
@@ -180,6 +258,37 @@ defmodule Plausible.Application do
 
       nil ->
         pool_config
+    end
+  end
+
+  defp maybe_add_persistor_pool(pool_config, default) do
+    backend =
+      :plausible
+      |> Application.fetch_env!(Plausible.Ingestion.Persistor)
+      |> Keyword.fetch!(:backend)
+
+    persistor_conf = Application.get_env(:plausible, Plausible.Ingestion.Persistor.Remote)
+
+    if backend in [
+         Plausible.Ingestion.Persistor.Remote,
+         Plausible.Ingestion.Persistor.EmbeddedWithRelay
+       ] do
+      persistor_url = Keyword.fetch!(persistor_conf, :url)
+      count = Keyword.fetch!(persistor_conf, :count)
+      timeout_ms = Keyword.fetch!(persistor_conf, :timeout_ms)
+
+      Map.put(
+        pool_config,
+        persistor_url,
+        Config.Reader.merge(
+          default,
+          protocols: [:http2],
+          count: count,
+          conn_opts: [transport_opts: [timeout: timeout_ms, nodelay: false]]
+        )
+      )
+    else
+      pool_config
     end
   end
 

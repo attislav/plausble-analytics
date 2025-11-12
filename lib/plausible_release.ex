@@ -13,7 +13,7 @@ defmodule Plausible.Release do
 
   def should_be_first_launch? do
     on_ee do
-      false
+      always(false)
     else
       not (_has_users? = Repo.exists?(Plausible.Auth.User))
     end
@@ -63,7 +63,10 @@ defmodule Plausible.Release do
     streaks = migration_streaks(pending)
 
     Enum.each(streaks, fn {repo, up_to_version} ->
-      {:ok, _, _} = Ecto.Migrator.with_repo(repo, &Ecto.Migrator.run(&1, :up, to: up_to_version))
+      {:ok, _, _} =
+        Ecto.Migrator.with_repo(repo, &Ecto.Migrator.run(&1, :up, to: up_to_version),
+          log: :notice
+        )
     end)
   end
 
@@ -192,7 +195,13 @@ defmodule Plausible.Release do
 
         monthly_cost = plan.monthly_cost && Money.to_decimal(plan.monthly_cost)
         yearly_cost = plan.yearly_cost && Money.to_decimal(plan.yearly_cost)
-        {:ok, features} = Plausible.Billing.Ecto.FeatureList.dump(plan.features)
+
+        features =
+          Enum.map(plan.features, fn f ->
+            {:ok, feat} = Plausible.Billing.Ecto.Feature.dump(f)
+            feat
+          end)
+
         {:ok, team_member_limit} = Plausible.Billing.Ecto.Limit.dump(plan.team_member_limit)
 
         plan

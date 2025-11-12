@@ -9,9 +9,9 @@
 #
 # We recommend using the bang functions (`insert!`, `update!`
 # and so on) as they will fail if something goes wrong.
-import Plausible.Teams.Test
+use Plausible
 
-FunWithFlags.enable(:teams)
+import Plausible.Teams.Test
 
 words =
   for i <- 0..(:erlang.system_info(:atom_count) - 1),
@@ -22,6 +22,12 @@ user = new_user(email: "user@plausible.test", password: "plausible")
 native_stats_range =
   Date.range(
     Date.add(Date.utc_today(), -720),
+    Date.utc_today()
+  )
+
+native_stats_range2 =
+  Date.range(
+    Date.add(Date.utc_today(), -320),
     Date.utc_today()
   )
 
@@ -62,6 +68,28 @@ site =
 add_guest(site, user: new_user(name: "Arnold Wallaby", password: "plausible"), role: :viewer)
 add_guest(site, user: new_user(name: "Lois Lane", password: "plausible"), role: :editor)
 
+another_site =
+  new_site(
+    domain: "another.site",
+    team: [
+      native_stats_start_at: NaiveDateTime.new!(native_stats_range2.first, ~T[00:00:00]),
+      stats_start_date: NaiveDateTime.new!(native_stats_range2.first, ~T[00:00:00])
+    ],
+    owner: user
+  )
+
+user2 = new_user(name: "Mary Jane", email: "user2@plausible.test", password: "plausible")
+site2 = new_site(domain: "computer.example.com", owner: user2)
+invite_guest(site2, user, inviter: user2, role: :viewer)
+
+on_ee do
+  solo_user = new_user(name: "Solo User", email: "solo@plausible.test", password: "plausible")
+  new_site(domain: "mysolosite.com", owner: solo_user)
+  {:ok, solo_team} = Plausible.Teams.get_or_create(solo_user)
+
+  Plausible.Billing.DevSubscriptions.create(solo_team.id, "910413")
+end
+
 Plausible.Factory.insert_list(29, :ip_rule, site: site)
 Plausible.Factory.insert(:country_rule, site: site, country_code: "PL")
 Plausible.Factory.insert(:country_rule, site: site, country_code: "EE")
@@ -97,7 +125,7 @@ seeded_token = Plausible.Plugins.API.Token.generate("seed-token")
 {:ok, _goal5} = Plausible.Goals.create(site, %{"page_path" => Enum.random(long_random_paths)})
 {:ok, outbound} = Plausible.Goals.create(site, %{"event_name" => "Outbound Link: Click"})
 
-if Plausible.ee?() do
+if ee?() do
   {:ok, _funnel} =
     Plausible.Funnels.create(site, "From homepage to login", [
       %{"goal_id" => goal1.id},
@@ -163,12 +191,13 @@ utm_medium = %{
   "Twitter" => ["social"]
 }
 
-random_event_data = fn ->
+random_event_data = fn site ->
+  domain = site.domain
   referrer_source = Enum.random(sources)
 
   [
     site_id: site.id,
-    hostname: Enum.random(["en.dummy.site", "es.dummy.site", "dummy.site"]),
+    hostname: Enum.random(["en.#{domain}", "es.#{domain}", domain]),
     referrer_source: referrer_source,
     browser: Enum.random(["Microsoft Edge", "Chrome", "curl", "Safari", "Firefox", "Vivaldi"]),
     browser_version: to_string(Enum.random(0..50)),
@@ -212,7 +241,7 @@ native_stats_range
     user_id = :rand.uniform(clickhouse_max_uint64)
 
     event =
-      random_event_data.()
+      random_event_data.(site)
       |> Keyword.merge(user_id: user_id)
 
     Enum.reduce(0..Enum.random(0..5), [], fn event_index, events ->
@@ -224,12 +253,12 @@ native_stats_range
 
       event = Keyword.merge(event, timestamp: timestamp)
 
-      event =
+      to_insert =
         cond do
           event_index > 0 && :rand.uniform() < 0.1 ->
             event
             |> Keyword.merge(name: outbound.event_name)
-            |> then(&Plausible.Factory.build(:event, &1))
+            |> then(&[Plausible.Factory.build(:event, &1)])
 
           event_index > 0 && :rand.uniform() < 0.05 ->
             amount = Decimal.new(:rand.uniform(100))
@@ -240,14 +269,59 @@ native_stats_range
             |> Keyword.merge(revenue_source_amount: amount)
             |> Keyword.merge(revenue_reporting_currency: "USD")
             |> Keyword.merge(revenue_reporting_amount: amount)
-            |> then(&Plausible.Factory.build(:event, &1))
+            |> then(&[Plausible.Factory.build(:event, &1)])
 
           true ->
-            event
-            |> then(&Plausible.Factory.build(:pageview, &1))
+            pageview = Plausible.Factory.build(:pageview, event)
+
+            engagement =
+              Map.merge(pageview, %{
+                name: "engagement",
+                engagement_time: Enum.random(300..10000),
+                scroll_depth: Enum.random(1..100)
+              })
+
+            [engagement, pageview]
         end
 
-      [event | events]
+      to_insert ++ events
+    end)
+    |> Enum.reverse()
+  end)
+end)
+|> Plausible.TestUtils.populate_stats()
+
+native_stats_range2
+|> Enum.flat_map(fn date ->
+  n_visitors = 10 + :rand.uniform(70)
+
+  Enum.flat_map(0..n_visitors, fn _ ->
+    visit_start_timestamp = with_random_time.(date)
+    user_id = :rand.uniform(clickhouse_max_uint64)
+
+    event =
+      random_event_data.(another_site)
+      |> Keyword.merge(user_id: user_id)
+
+    Enum.reduce(0..Enum.random(0..5), [], fn _event_index, events ->
+      timestamp =
+        case events do
+          [] -> visit_start_timestamp
+          [event | _] -> next_event_timestamp.(event.timestamp)
+        end
+
+      event = Keyword.merge(event, timestamp: timestamp)
+
+      pageview = Plausible.Factory.build(:pageview, event)
+
+      engagement =
+        Map.merge(pageview, %{
+          name: "engagement",
+          engagement_time: Enum.random(300..10000),
+          scroll_depth: Enum.random(1..100)
+        })
+
+      [engagement, pageview] ++ events
     end)
     |> Enum.reverse()
   end)
@@ -268,6 +342,8 @@ site_import =
 imported_stats_range
 |> Enum.flat_map(fn date ->
   Enum.flat_map(0..Enum.random(1..50), fn _ ->
+    pages_visits = Enum.random(1..15)
+
     [
       Plausible.Factory.build(:imported_visitors,
         date: date,
@@ -290,10 +366,11 @@ imported_stats_range
         date: date,
         page: Enum.random(long_random_paths),
         visitors: Enum.random(1..10),
-        visits: Enum.random(1..15),
+        visits: pages_visits,
         pageviews: Enum.random(1..50),
         exits: Enum.random(1..10),
-        time_on_page: Enum.random(1000..10000)
+        total_time_on_page: Enum.random(1000..10000),
+        total_time_on_page_visits: pages_visits
       )
     ]
   end)

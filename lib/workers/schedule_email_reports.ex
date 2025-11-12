@@ -6,9 +6,8 @@ defmodule Plausible.Workers.ScheduleEmailReports do
 
   @impl Oban.Worker
   @doc """
-    Email reports should be sent on Monday at 9am according to the timezone
-  of a site. This job runs every day at midnight to ensure that all sites
-  have a scheduled job for email reports.
+  Email reports should be sent on Monday at 9am according to the timezone
+  of a site.
   """
   def perform(_job) do
     schedule_weekly_emails()
@@ -27,6 +26,7 @@ defmodule Plausible.Workers.ScheduleEmailReports do
     sites =
       Repo.all(
         from s in Plausible.Site,
+          inner_join: t in assoc(s, :team),
           join: wr in Plausible.Site.WeeklyReport,
           on: wr.site_id == s.id,
           left_join: job in subquery(weekly_jobs),
@@ -34,7 +34,7 @@ defmodule Plausible.Workers.ScheduleEmailReports do
             fragment("(? -> 'site_id')::int", job.args) == s.id and
               job.state not in ["completed", "discarded"],
           where: is_nil(job),
-          where: not s.locked,
+          where: not t.locked,
           preload: [weekly_report: wr]
       )
 
@@ -51,7 +51,7 @@ defmodule Plausible.Workers.ScheduleEmailReports do
   def monday_9am(timezone) do
     DateTime.now!(timezone)
     |> DateTime.shift(week: 1)
-    |> Timex.beginning_of_week()
+    |> Plausible.Times.beginning_of_week()
     |> DateTime.shift(hour: 9)
   end
 
@@ -67,6 +67,7 @@ defmodule Plausible.Workers.ScheduleEmailReports do
     sites =
       Repo.all(
         from s in Plausible.Site,
+          inner_join: t in assoc(s, :team),
           join: mr in Plausible.Site.MonthlyReport,
           on: mr.site_id == s.id,
           left_join: job in subquery(monthly_jobs),
@@ -74,7 +75,7 @@ defmodule Plausible.Workers.ScheduleEmailReports do
             fragment("(? -> 'site_id')::int", job.args) == s.id and
               job.state not in ["completed", "discarded"],
           where: is_nil(job),
-          where: not s.locked,
+          where: not t.locked,
           preload: [monthly_report: mr]
       )
 
@@ -91,7 +92,7 @@ defmodule Plausible.Workers.ScheduleEmailReports do
   def first_of_month_9am(timezone) do
     DateTime.now!(timezone)
     |> DateTime.shift(month: 1)
-    |> Timex.beginning_of_month()
+    |> Plausible.Times.beginning_of_month()
     |> DateTime.shift(hour: 9)
   end
 end

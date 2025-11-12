@@ -1049,6 +1049,94 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       assert json_response(conn, 200)["results"] == [%{"metrics" => [3], "dimensions" => []}]
     end
 
+    test "contains source filter with no ref value match", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, referrer: ""),
+        build(:pageview, referrer_source: "Google"),
+        build(:pageview, referrer_source: "https://DirectX.com")
+      ])
+
+      conn =
+        post(conn, "/api/v2/query", %{
+          "site_id" => site.domain,
+          "date_range" => "all",
+          "metrics" => ["visitors"],
+          "filters" => [
+            ["contains", "visit:source", ["Direct"]]
+          ]
+        })
+
+      assert json_response(conn, 200)["results"] == [%{"metrics" => [2], "dimensions" => []}]
+    end
+
+    test "contains not source filter with no ref value match", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, referrer: ""),
+        build(:pageview, referrer_source: "Google"),
+        build(:pageview, referrer_source: "https://DirectX.com")
+      ])
+
+      conn =
+        post(conn, "/api/v2/query", %{
+          "site_id" => site.domain,
+          "date_range" => "all",
+          "metrics" => ["visitors"],
+          "filters" => [
+            ["contains_not", "visit:source", ["Direct"]]
+          ]
+        })
+
+      assert json_response(conn, 200)["results"] == [%{"metrics" => [1], "dimensions" => []}]
+    end
+
+    test "contains source filter with no ref value match combined with member filter", %{
+      conn: conn,
+      site: site
+    } do
+      populate_stats(site, [
+        build(:pageview, referrer: ""),
+        build(:pageview, referrer_source: "Google"),
+        build(:pageview, referrer_source: "Bing"),
+        build(:pageview, referrer_source: "https://DirectX.com")
+      ])
+
+      conn =
+        post(conn, "/api/v2/query", %{
+          "site_id" => site.domain,
+          "date_range" => "all",
+          "metrics" => ["visitors"],
+          "filters" => [
+            ["contains", "visit:source", ["Direct", "Google"]]
+          ]
+        })
+
+      assert json_response(conn, 200)["results"] == [%{"metrics" => [3], "dimensions" => []}]
+    end
+
+    test "contains source filter with no ref value match without case sensitivity", %{
+      conn: conn,
+      site: site
+    } do
+      populate_stats(site, [
+        build(:pageview, referrer: ""),
+        build(:pageview, referrer_source: "Google"),
+        build(:pageview, referrer_source: "Bing"),
+        build(:pageview, referrer_source: "https://DirectX.com")
+      ])
+
+      conn =
+        post(conn, "/api/v2/query", %{
+          "site_id" => site.domain,
+          "date_range" => "all",
+          "metrics" => ["visitors"],
+          "filters" => [
+            ["contains", "visit:source", ["direct"], %{"case_sensitive" => false}]
+          ]
+        })
+
+      assert json_response(conn, 200)["results"] == [%{"metrics" => [2], "dimensions" => []}]
+    end
+
     test "`matches` operator", %{conn: conn, site: site} do
       populate_stats(site, [
         build(:pageview, pathname: "/user/1234"),
@@ -1342,6 +1430,59 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
   end
 
   describe "timeseries" do
+    test "breakdown by time:minute (internal API), counts visitors and visits in all buckets their session was active in",
+         %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, user_id: @user_id, timestamp: ~N[2021-01-01 00:00:00]),
+        build(:pageview, user_id: @user_id, timestamp: ~N[2021-01-01 00:10:00])
+      ])
+
+      conn =
+        post(conn, "/api/v2/query-internal-test", %{
+          "site_id" => site.domain,
+          "metrics" => ["visitors", "visits", "pageviews"],
+          "date_range" => ["2021-01-01T00:00:00Z", "2021-01-01T00:10:00Z"],
+          "dimensions" => ["time:minute"]
+        })
+
+      assert json_response(conn, 200)["results"] == [
+               %{"dimensions" => ["2021-01-01 00:00:00"], "metrics" => [1, 1, 1]},
+               %{"dimensions" => ["2021-01-01 00:01:00"], "metrics" => [1, 1, 0]},
+               %{"dimensions" => ["2021-01-01 00:02:00"], "metrics" => [1, 1, 0]},
+               %{"dimensions" => ["2021-01-01 00:03:00"], "metrics" => [1, 1, 0]},
+               %{"dimensions" => ["2021-01-01 00:04:00"], "metrics" => [1, 1, 0]},
+               %{"dimensions" => ["2021-01-01 00:05:00"], "metrics" => [1, 1, 0]},
+               %{"dimensions" => ["2021-01-01 00:06:00"], "metrics" => [1, 1, 0]},
+               %{"dimensions" => ["2021-01-01 00:07:00"], "metrics" => [1, 1, 0]},
+               %{"dimensions" => ["2021-01-01 00:08:00"], "metrics" => [1, 1, 0]},
+               %{"dimensions" => ["2021-01-01 00:09:00"], "metrics" => [1, 1, 0]},
+               %{"dimensions" => ["2021-01-01 00:10:00"], "metrics" => [1, 1, 1]}
+             ]
+    end
+
+    test "breakdown by time:hour (internal API), counts visitors and visits in all buckets their session was active in",
+         %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, user_id: @user_id, timestamp: ~N[2021-01-01 00:20:00]),
+        build(:pageview, user_id: @user_id, timestamp: ~N[2021-01-01 00:40:00]),
+        build(:pageview, user_id: @user_id, timestamp: ~N[2021-01-01 01:00:00]),
+        build(:pageview, user_id: @user_id, timestamp: ~N[2021-01-01 01:20:00])
+      ])
+
+      conn =
+        post(conn, "/api/v2/query-internal-test", %{
+          "site_id" => site.domain,
+          "metrics" => ["visitors", "visits", "visit_duration"],
+          "date_range" => ["2021-01-01", "2021-01-02"],
+          "dimensions" => ["time:hour"]
+        })
+
+      assert json_response(conn, 200)["results"] == [
+               %{"dimensions" => ["2021-01-01 00:00:00"], "metrics" => [1, 1, 0]},
+               %{"dimensions" => ["2021-01-01 01:00:00"], "metrics" => [1, 1, 3600]}
+             ]
+    end
+
     test "shows hourly data for a certain date with time_labels", %{conn: conn, site: site} do
       populate_stats(site, [
         build(:pageview, user_id: @user_id, timestamp: ~N[2021-01-01 00:00:00]),
@@ -1448,6 +1589,34 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
                "2020-12-21",
                "2020-12-28",
                "2021-01-04"
+             ]
+    end
+
+    test "shows month to date with time labels trimmed", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, timestamp: ~N[2021-01-01 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-15 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-16 00:00:00])
+      ])
+
+      conn =
+        post(conn, "/api/v2/query-internal-test", %{
+          "site_id" => site.domain,
+          "metrics" => ["visitors"],
+          "date_range" => "month",
+          "date" => "2021-01-15",
+          "dimensions" => ["time:day"],
+          "include" => %{"trim_relative_date_range" => true}
+        })
+
+      assert json_response(conn, 200)["results"] == [
+               %{"dimensions" => ["2021-01-01"], "metrics" => [1]},
+               %{"dimensions" => ["2021-01-15"], "metrics" => [1]}
+             ]
+
+      assert json_response(conn, 200)["query"]["date_range"] == [
+               "2021-01-01T00:00:00Z",
+               "2021-01-15T23:59:59Z"
              ]
     end
 
@@ -1621,6 +1790,76 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
                %{"dimensions" => ["2021-01-02 10:00:00"], "metrics" => [1]},
                %{"dimensions" => ["2021-01-02 11:00:00"], "metrics" => [4]},
                %{"dimensions" => ["2021-01-02 12:00:00"], "metrics" => [2]}
+             ]
+    end
+
+    test "visitors and visits are smeared across time:minute buckets but visit_duration is not",
+         %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 00:00:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 00:10:00]),
+        build(:pageview, user_id: 2, timestamp: ~N[2021-01-01 00:05:00]),
+        build(:pageview, user_id: 2, timestamp: ~N[2021-01-01 00:08:00])
+      ])
+
+      conn =
+        post(conn, "/api/v2/query-internal-test", %{
+          "site_id" => site.domain,
+          "metrics" => ["visitors", "visits", "visit_duration", "pageviews"],
+          "date_range" => ["2021-01-01T00:00:00Z", "2021-01-01T00:30:00Z"],
+          "dimensions" => ["time:minute"]
+        })
+
+      assert json_response(conn, 200)["results"] == [
+               %{"dimensions" => ["2021-01-01 00:00:00"], "metrics" => [1, 1, 0, 1]},
+               %{"dimensions" => ["2021-01-01 00:01:00"], "metrics" => [1, 1, 0, 0]},
+               %{"dimensions" => ["2021-01-01 00:02:00"], "metrics" => [1, 1, 0, 0]},
+               %{"dimensions" => ["2021-01-01 00:03:00"], "metrics" => [1, 1, 0, 0]},
+               %{"dimensions" => ["2021-01-01 00:04:00"], "metrics" => [1, 1, 0, 0]},
+               %{"dimensions" => ["2021-01-01 00:05:00"], "metrics" => [2, 2, 0, 1]},
+               %{"dimensions" => ["2021-01-01 00:06:00"], "metrics" => [2, 2, 0, 0]},
+               %{"dimensions" => ["2021-01-01 00:07:00"], "metrics" => [2, 2, 0, 0]},
+               %{"dimensions" => ["2021-01-01 00:08:00"], "metrics" => [2, 2, 180, 1]},
+               %{"dimensions" => ["2021-01-01 00:09:00"], "metrics" => [1, 1, 0, 0]},
+               %{"dimensions" => ["2021-01-01 00:10:00"], "metrics" => [1, 1, 600, 1]}
+             ]
+    end
+
+    test "visitors and visits are smeared across time:hour buckets but visit_duration is not", %{
+      conn: conn,
+      site: site
+    } do
+      populate_stats(site, [
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 00:00:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 00:20:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 00:40:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 01:00:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 01:20:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 01:40:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 02:00:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 02:20:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 02:40:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 03:00:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 03:20:00]),
+        build(:pageview, user_id: 2, timestamp: ~N[2021-01-01 01:05:00]),
+        build(:pageview, user_id: 2, timestamp: ~N[2021-01-01 01:10:00]),
+        build(:pageview, user_id: 3, timestamp: ~N[2021-01-01 02:10:00]),
+        build(:pageview, user_id: 3, timestamp: ~N[2021-01-01 02:20:00])
+      ])
+
+      conn =
+        post(conn, "/api/v2/query", %{
+          "site_id" => site.domain,
+          "metrics" => ["visits", "visitors", "visit_duration", "pageviews"],
+          "date_range" => ["2021-01-01", "2021-01-01"],
+          "dimensions" => ["time:hour"]
+        })
+
+      assert json_response(conn, 200)["results"] == [
+               %{"dimensions" => ["2021-01-01 00:00:00"], "metrics" => [1, 1, 0, 3]},
+               %{"dimensions" => ["2021-01-01 01:00:00"], "metrics" => [2, 2, 300, 5]},
+               %{"dimensions" => ["2021-01-01 02:00:00"], "metrics" => [2, 2, 600, 5]},
+               %{"dimensions" => ["2021-01-01 03:00:00"], "metrics" => [1, 1, 12_000, 2]}
              ]
     end
   end
@@ -3603,6 +3842,69 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
            ]
   end
 
+  test "visits, visit_duration and views_per_visit calculation handles invalid session data gracefully",
+       %{
+         conn: conn,
+         site: site
+       } do
+    # NOTE: At the time of this test is added, it appears it does _not_
+    # catch the regression on MacOS (ARM), regardless if Clickhouse is run
+    # natively or from a docker container. The test still does catch
+    # that regression when ran on Linux for instance (including CI).
+
+    user_id = System.unique_integer([:positive])
+
+    populate_stats(site, [
+      build(:pageview,
+        user_id: user_id,
+        pathname: "/",
+        timestamp: ~N[2021-01-01 00:00:00]
+      )
+    ])
+
+    session =
+      Plausible.IngestRepo.get_by!(Plausible.ClickhouseSessionV2,
+        site_id: site.id,
+        user_id: user_id
+      )
+
+    # The session values are manually manipulated to trigger negative values for certain metrics
+    negative1 = %{session | pageviews: 0, events: session.events + 1, sign: -1}
+    negative2 = %{session | pageviews: 0, events: session.events + 2, sign: -1}
+
+    Plausible.Session.WriteBuffer.insert([negative1, negative2])
+    Plausible.Session.WriteBuffer.flush()
+
+    conn =
+      post(conn, "/api/v2/query", %{
+        "site_id" => site.domain,
+        "date_range" => "all",
+        "metrics" => [
+          "visits",
+          "visit_duration"
+        ],
+        "dimensions" => ["visit:exit_page"]
+      })
+
+    assert json_response(conn, 200)["results"] == [
+             %{"dimensions" => ["/"], "metrics" => [0, 0]}
+           ]
+
+    conn =
+      post(conn, "/api/v2/query", %{
+        "site_id" => site.domain,
+        "date_range" => "all",
+        "metrics" => [
+          "views_per_visit"
+        ],
+        "dimensions" => []
+      })
+
+    assert json_response(conn, 200)["results"] == [
+             %{"dimensions" => [], "metrics" => [0]}
+           ]
+  end
+
   describe "using the returned query object in a new POST request" do
     test "yields the same results for a simple aggregate query", %{conn: conn, site: site} do
       Plausible.Site.changeset(site, %{timezone: "Europe/Tallinn"})
@@ -3724,16 +4026,18 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
   describe "scroll_depth" do
     setup [:create_user, :create_site, :create_api_key, :use_api_key]
 
-    test "scroll depth is (not yet) available in public API", %{conn: conn, site: site} do
+    test "cannot query scroll depth without page filter or dimension", %{conn: conn, site: site} do
       conn =
         post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
-          "filters" => [["is", "event:page", ["/"]]],
           "date_range" => "all",
           "metrics" => ["scroll_depth"]
         })
 
-      assert json_response(conn, 400)["error"] =~ "Invalid metric \"scroll_depth\""
+      assert %{"error" => error} = json_response(conn, 400)
+
+      assert error ==
+               "Metric `scroll_depth` can only be queried with event:page filters or dimensions."
     end
 
     test "can query scroll_depth metric with a page filter", %{conn: conn, site: site} do
@@ -3747,7 +4051,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "filters" => [["is", "event:page", ["/"]]],
           "date_range" => "all",
@@ -3781,7 +4085,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "filters" => [["is", "event:page", ["/"]], ["is", "event:props:author", ["john"]]],
           "date_range" => "all",
@@ -3793,13 +4097,13 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
              ]
     end
 
-    test "scroll depth is 0 when no engagement data in range", %{conn: conn, site: site} do
+    test "scroll depth is nil when no engagement data in range", %{conn: conn, site: site} do
       populate_stats(site, [
         build(:pageview, timestamp: ~N[2021-01-01 00:00:00])
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "filters" => [["is", "event:page", ["/"]]],
           "date_range" => "all",
@@ -3811,9 +4115,9 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
              ]
     end
 
-    test "scroll depth is 0 when no data at all in range", %{conn: conn, site: site} do
+    test "scroll depth is nil when no data at all in range", %{conn: conn, site: site} do
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "filters" => [["is", "event:page", ["/"]]],
           "date_range" => "all",
@@ -3845,7 +4149,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["scroll_depth"],
           "date_range" => "all",
@@ -3879,7 +4183,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["scroll_depth"],
           "date_range" => "all",
@@ -3908,7 +4212,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["scroll_depth"],
           "date_range" => "all",
@@ -3941,7 +4245,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["scroll_depth"],
           "date_range" => "all",
@@ -4028,7 +4332,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["scroll_depth"],
           "order_by" => [["scroll_depth", "asc"]],
@@ -4097,7 +4401,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["scroll_depth"],
           "date_range" => "all",
@@ -4169,7 +4473,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["scroll_depth"],
           "order_by" => [["scroll_depth", "desc"]],
@@ -4630,7 +4934,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors", "visits", "events", "pageviews"],
           "date_range" => "all",
@@ -4656,7 +4960,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors", "events", "pageviews"],
           "date_range" => "all",
@@ -4697,7 +5001,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors", "pageviews"],
           "date_range" => "all",
@@ -4738,7 +5042,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors", "pageviews"],
           "date_range" => "all",
@@ -4784,7 +5088,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors", "pageviews"],
           "date_range" => "all",
@@ -4829,7 +5133,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors", "pageviews"],
           "date_range" => "all",
@@ -4860,7 +5164,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors", "pageviews"],
           "date_range" => "all",
@@ -4880,7 +5184,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       site: site
     } do
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors"],
           "date_range" => "all",
@@ -4899,20 +5203,6 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
 
   describe "segment filters" do
     setup [:create_user, :create_site, :create_api_key, :use_api_key]
-
-    test "segment filters are (not yet) available in public API", %{conn: conn, site: site} do
-      conn =
-        post(conn, "/api/v2/query", %{
-          "site_id" => site.domain,
-          "filters" => [["is", "segment", [1]]],
-          "date_range" => "all",
-          "metrics" => ["visitors"]
-        })
-
-      assert json_response(conn, 400) == %{
-               "error" => "#/filters/0: Invalid filter [\"is\", \"segment\", [1]]"
-             }
-    end
 
     test "site segments of other sites don't resolve", %{
       conn: conn,
@@ -4933,7 +5223,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
         )
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "filters" => [["is", "segment", [segment.id]]],
           "date_range" => "all",
@@ -4945,7 +5235,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
              }
     end
 
-    test "even personal segments of other users of the same site resolve to filters, with segments expanded in response",
+    test ":has_not_done filter resolves in /api/v2/query endpoint when it is part of a segment",
          %{
            conn: conn,
            site: site
@@ -4954,12 +5244,12 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
 
       segment =
         insert(:segment,
-          type: :personal,
+          type: :site,
           owner: other_user,
           site: site,
           name: "Signups",
           segment_data: %{
-            "filters" => [["is", "event:name", ["Signup"]]]
+            "filters" => [["has_not_done", ["is", "event:goal", ["Signup"]]]]
           }
         )
 
@@ -4987,7 +5277,64 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
+          "site_id" => site.domain,
+          "filters" => [["is", "segment", [segment.id]]],
+          "date_range" => "all",
+          "metrics" => ["events"]
+        })
+
+      assert json_response(conn, 200)["results"] == [%{"dimensions" => [], "metrics" => [1]}]
+
+      # response shows what filters the segment was resolved to
+      assert json_response(conn, 200)["query"]["filters"] == [
+               ["has_not_done", ["is", "event:goal", ["Signup"]]]
+             ]
+    end
+
+    test "even personal segments of other users of the same site resolve to filters, with segments expanded in response",
+         %{
+           conn: conn,
+           site: site
+         } do
+      other_user = add_guest(site, role: :editor)
+
+      segment =
+        insert(:segment,
+          type: :personal,
+          owner: other_user,
+          site: site,
+          name: "Signups",
+          segment_data: %{
+            "filters" => [["is", "event:goal", ["Signup"]]]
+          }
+        )
+
+      insert(:goal, %{site: site, event_name: "Signup"})
+
+      populate_stats(site, [
+        build(:event,
+          name: "Signup",
+          timestamp: ~N[2021-01-01 00:00:00]
+        ),
+        build(:event,
+          name: "Signup",
+          user_id: @user_id,
+          timestamp: ~N[2021-01-01 00:00:00]
+        ),
+        build(:event,
+          name: "Signup",
+          user_id: @user_id,
+          timestamp: ~N[2021-01-01 00:00:00]
+        ),
+        build(:event,
+          name: "AnyOtherEvent",
+          timestamp: ~N[2021-01-01 00:00:00]
+        )
+      ])
+
+      conn =
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "filters" => [["is", "segment", [segment.id]]],
           "date_range" => "all",
@@ -4998,7 +5345,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryTest do
 
       # response shows what filters the segment was resolved to
       assert json_response(conn, 200)["query"]["filters"] == [
-               ["and", [["is", "event:name", ["Signup"]]]]
+               ["is", "event:goal", ["Signup"]]
              ]
     end
   end

@@ -4,8 +4,19 @@ defmodule Plausible.Billing.Quota do
   """
 
   use Plausible
-  alias Plausible.Billing.{Plan, EnterprisePlan}
+  alias Plausible.Billing.{EnterprisePlan, Plan}
   alias Plausible.Billing.Quota.Limits
+
+  @type cycle() :: :current_cycle | :last_cycle | :penultimate_cycle
+
+  @type cycles_usage() :: %{cycle() => usage_cycle()}
+
+  @type usage_cycle() :: %{
+          date_range: Date.Range.t(),
+          pageviews: non_neg_integer(),
+          custom_events: non_neg_integer(),
+          total: non_neg_integer()
+        }
 
   @doc """
   Ensures that the given usage map is within the limits
@@ -40,21 +51,34 @@ defmodule Plausible.Billing.Quota do
   end
 
   @doc """
-  Suggests a suitable tier (Growth or Business) for the given usage map.
+  Suggests a suitable tier (Starter, Growth or Business) for the given usage map.
 
   If even the highest Business plan does not accommodate the usage, then
   `:custom` is returned. This means that this kind of usage should get on
   a custom plan.
 
+  To avoid confusion, we do not recommend a lower tier for customers that
+  are already on a higher tier (even if their usage is low enough).
+
   `nil` is returned if the usage is not eligible for upgrade.
   """
-  def suggest_tier(usage, highest_growth_plan, highest_business_plan) do
-    if eligible_for_upgrade?(usage) do
-      cond do
-        usage_fits_plan?(usage, highest_growth_plan) -> :growth
-        usage_fits_plan?(usage, highest_business_plan) -> :business
-        true -> :custom
-      end
+  def suggest_tier(usage, highest_starter, highest_growth, highest_business, owned_tier) do
+    cond do
+      not eligible_for_upgrade?(usage) ->
+        nil
+
+      not is_nil(highest_starter) and usage_fits_plan?(usage, highest_starter) and
+          owned_tier not in [:business, :growth] ->
+        :starter
+
+      usage_fits_plan?(usage, highest_growth) and owned_tier != :business ->
+        :growth
+
+      usage_fits_plan?(usage, highest_business) ->
+        :business
+
+      true ->
+        :custom
     end
   end
 
@@ -102,14 +126,14 @@ defmodule Plausible.Billing.Quota do
     end
   end
 
-  @spec exceeds_last_two_usage_cycles?(Plausible.Teams.Billing.cycles_usage(), non_neg_integer()) ::
+  @spec exceeds_last_two_usage_cycles?(cycles_usage(), non_neg_integer()) ::
           boolean()
   def exceeds_last_two_usage_cycles?(cycles_usage, allowed_volume) do
     exceeded = exceeded_cycles(cycles_usage, allowed_volume)
     :penultimate_cycle in exceeded && :last_cycle in exceeded
   end
 
-  @spec exceeded_cycles(Plausible.Teams.Billing.cycles_usage(), non_neg_integer()) :: list()
+  @spec exceeded_cycles(cycles_usage(), non_neg_integer()) :: list()
   def exceeded_cycles(cycles_usage, allowed_volume) do
     limit = Limits.pageview_limit_with_margin(allowed_volume)
 

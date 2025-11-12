@@ -43,11 +43,13 @@ defmodule Plausible.Session.CacheStoreTest do
   } do
     telemetry_event = CacheStore.lock_telemetry_event()
 
+    test_pid = self()
+
     :telemetry.attach(
       "#{test}-telemetry-handler",
       telemetry_event,
       fn ^telemetry_event, %{duration: d}, _, _ when is_integer(d) ->
-        send(self(), {:telemetry_handled, d})
+        send(test_pid, {:telemetry_handled, d})
       end,
       %{}
     )
@@ -56,7 +58,7 @@ defmodule Plausible.Session.CacheStoreTest do
     event2 = build(:event, name: "pageview", user_id: event1.user_id, site_id: event1.site_id)
     event3 = build(:event, name: "pageview", user_id: event1.user_id, site_id: event1.site_id)
 
-    CacheStore.on_event(event1, @session_params, nil, buffer)
+    CacheStore.on_event(event1, @session_params, nil, buffer_insert: buffer)
 
     assert_receive({:buffer, :insert, [[session1]]})
     assert_receive({:telemetry_handled, duration})
@@ -65,7 +67,7 @@ defmodule Plausible.Session.CacheStoreTest do
     [event2, event3]
     |> Enum.map(fn e ->
       Task.async(fn ->
-        CacheStore.on_event(e, @session_params, nil, slow_buffer)
+        CacheStore.on_event(e, @session_params, nil, buffer_insert: slow_buffer)
       end)
     end)
     |> Task.await_many()
@@ -122,7 +124,7 @@ defmodule Plausible.Session.CacheStoreTest do
 
     async1 =
       Task.async(fn ->
-        CacheStore.on_event(event1, @session_params, nil, very_slow_buffer)
+        CacheStore.on_event(event1, @session_params, nil, buffer_insert: very_slow_buffer)
       end)
 
     # Ensure next events are executed after processing event1 starts
@@ -130,12 +132,12 @@ defmodule Plausible.Session.CacheStoreTest do
 
     async2 =
       Task.async(fn ->
-        CacheStore.on_event(event2, @session_params, nil, buffer)
+        CacheStore.on_event(event2, @session_params, nil, buffer_insert: buffer)
       end)
 
     async3 =
       Task.async(fn ->
-        CacheStore.on_event(event3, @session_params, nil, buffer)
+        CacheStore.on_event(event3, @session_params, nil, buffer_insert: buffer)
       end)
 
     Task.await_many([async1, async2, async3])
@@ -160,7 +162,7 @@ defmodule Plausible.Session.CacheStoreTest do
 
     async1 =
       Task.async(fn ->
-        CacheStore.on_event(event1, @session_params, nil, very_slow_buffer)
+        CacheStore.on_event(event1, @session_params, nil, buffer_insert: very_slow_buffer)
       end)
 
     # Ensure next events are executed after processing event1 starts
@@ -168,14 +170,14 @@ defmodule Plausible.Session.CacheStoreTest do
 
     async2 =
       Task.async(fn ->
-        CacheStore.on_event(event2, @session_params, nil, buffer)
+        CacheStore.on_event(event2, @session_params, nil, buffer_insert: buffer)
       end)
 
     Process.sleep(100)
 
     async3 =
       Task.async(fn ->
-        CacheStore.on_event(event3, @session_params, nil, buffer)
+        CacheStore.on_event(event3, @session_params, nil, buffer_insert: buffer)
       end)
 
     Task.await_many([async1, async2, async3])
@@ -198,7 +200,7 @@ defmodule Plausible.Session.CacheStoreTest do
     event = build(:event, name: "pageview")
 
     assert_raise RuntimeError, "boom", fn ->
-      CacheStore.on_event(event, @session_params, nil, crashing_buffer)
+      CacheStore.on_event(event, @session_params, nil, buffer_insert: crashing_buffer)
     end
   end
 
@@ -210,7 +212,7 @@ defmodule Plausible.Session.CacheStoreTest do
         "meta.value": ["true", "false"]
       )
 
-    CacheStore.on_event(event, @session_params, nil, buffer)
+    CacheStore.on_event(event, @session_params, nil, buffer_insert: buffer)
 
     assert_receive({:buffer, :insert, [sessions]})
     assert [session] = sessions
@@ -245,16 +247,18 @@ defmodule Plausible.Session.CacheStoreTest do
   end
 
   test "updates session counters", %{buffer: buffer} do
-    timestamp = Timex.now()
-    event1 = build(:event, name: "pageview", timestamp: timestamp |> Timex.shift(seconds: -10))
+    timestamp = DateTime.utc_now()
+
+    event1 =
+      build(:event, name: "pageview", timestamp: timestamp |> NaiveDateTime.shift(second: -10))
 
     event2 = %{
       event1
       | timestamp: timestamp
     }
 
-    CacheStore.on_event(event1, %{}, nil, buffer)
-    CacheStore.on_event(event2, %{}, nil, buffer)
+    CacheStore.on_event(event1, %{}, nil, buffer_insert: buffer)
+    CacheStore.on_event(event2, %{}, nil, buffer_insert: buffer)
     assert_receive({:buffer, :insert, [[_negative_record, session]]})
     assert session.is_bounce == false
     assert session.duration == 10
@@ -267,8 +271,8 @@ defmodule Plausible.Session.CacheStoreTest do
     pageview = build(:pageview, timestamp: NaiveDateTime.shift(now, second: -10))
     engagement = %{pageview | name: "engagement", timestamp: now}
 
-    CacheStore.on_event(pageview, %{}, nil, buffer)
-    CacheStore.on_event(engagement, %{}, nil, buffer)
+    CacheStore.on_event(pageview, %{}, nil, buffer_insert: buffer)
+    CacheStore.on_event(engagement, %{}, nil, buffer_insert: buffer)
     assert_receive({:buffer, :insert, [[session]]})
 
     assert session.is_bounce == true
@@ -282,7 +286,7 @@ defmodule Plausible.Session.CacheStoreTest do
 
     pageview1 = build(:event, name: "pageview", timestamp: start)
 
-    CacheStore.on_event(pageview1, %{}, nil, buffer)
+    CacheStore.on_event(pageview1, %{}, nil, buffer_insert: buffer)
     assert_receive({:buffer, :insert, [[start_session]]})
 
     for delta <- [20, 40, 60] do
@@ -292,11 +296,11 @@ defmodule Plausible.Session.CacheStoreTest do
           timestamp: start |> NaiveDateTime.shift(minute: delta)
         })
 
-      CacheStore.on_event(engagement, %{}, nil, buffer)
+      CacheStore.on_event(engagement, %{}, nil, buffer_insert: buffer)
     end
 
     pageview2 = Map.put(pageview1, :timestamp, start |> NaiveDateTime.shift(minute: 80))
-    CacheStore.on_event(pageview2, %{}, nil, buffer)
+    CacheStore.on_event(pageview2, %{}, nil, buffer_insert: buffer)
     assert_receive({:buffer, :insert, [[_negative_record, updated_session]]})
 
     assert updated_session.session_id == start_session.session_id
@@ -350,7 +354,7 @@ defmodule Plausible.Session.CacheStoreTest do
           site_id: site_id,
           pathname: "/path/1",
           hostname: "whatever.example.com",
-          timestamp: Timex.shift(Timex.now(), seconds: -5),
+          timestamp: DateTime.shift(DateTime.utc_now(), second: -5),
           user_id: 1
         ),
         build(:event,
@@ -377,7 +381,7 @@ defmodule Plausible.Session.CacheStoreTest do
           site_id: site_id,
           pathname: "/landing",
           hostname: "example.com",
-          timestamp: Timex.shift(Timex.now(), seconds: -5),
+          timestamp: DateTime.shift(DateTime.utc_now(), second: -5),
           user_id: 1
         ),
         build(:event,
@@ -404,7 +408,7 @@ defmodule Plausible.Session.CacheStoreTest do
           site_id: site_id,
           pathname: "/landing",
           hostname: "example.com",
-          timestamp: Timex.shift(Timex.now(), seconds: -5),
+          timestamp: DateTime.shift(DateTime.utc_now(), second: -5),
           user_id: 1
         ),
         build(:event,
@@ -412,7 +416,7 @@ defmodule Plausible.Session.CacheStoreTest do
           site_id: site_id,
           pathname: "/path/1",
           hostname: "analytics.example.com",
-          timestamp: Timex.shift(Timex.now(), seconds: -3),
+          timestamp: DateTime.shift(DateTime.utc_now(), second: -3),
           user_id: 1
         ),
         build(:event,
@@ -495,13 +499,15 @@ defmodule Plausible.Session.CacheStoreTest do
   end
 
   test "calculates duration correctly for out-of-order events", %{buffer: buffer} do
-    timestamp = Timex.now()
-    event1 = build(:event, name: "pageview", timestamp: timestamp |> Timex.shift(seconds: 10))
+    timestamp = DateTime.utc_now()
+
+    event1 =
+      build(:event, name: "pageview", timestamp: timestamp |> NaiveDateTime.shift(second: 10))
 
     event2 = %{event1 | timestamp: timestamp}
 
-    CacheStore.on_event(event1, %{}, nil, buffer)
-    CacheStore.on_event(event2, %{}, nil, buffer)
+    CacheStore.on_event(event1, %{}, nil, buffer_insert: buffer)
+    CacheStore.on_event(event2, %{}, nil, buffer_insert: buffer)
 
     assert_receive({:buffer, :insert, [[_negative_record, session]]})
     assert session.duration == 10
@@ -550,13 +556,64 @@ defmodule Plausible.Session.CacheStoreTest do
         %{e | pathname: "/exit"}
       ])
 
-      session_q = from s in Plausible.ClickhouseSessionV2, where: s.site_id == ^e.site_id
-      session = Plausible.ClickhouseRepo.one!(session_q, settings: [final: true])
+      session = get_session(e.site_id, final: true)
 
       refute session.is_bounce
       assert session.entry_page == "/"
       assert session.exit_page == "/exit"
       assert session.events == 4
+    end
+  end
+
+  describe "bounce detection" do
+    test "single pageview is bounce" do
+      session = create_session([build(:pageview)])
+      assert session.is_bounce
+    end
+
+    test "two pageviews is not a bounce" do
+      session = create_session([build(:pageview), build(:pageview)])
+      refute session.is_bounce
+    end
+
+    test "(implicitly interactive) custom event is not a bounce" do
+      session = create_session([build(:event, name: "interactive")])
+      refute session.is_bounce
+    end
+
+    test "non-interactive custom event is a bounce" do
+      session = create_session([build(:event, name: "non-interactive", interactive?: false)])
+      assert session.is_bounce
+    end
+
+    test "pageview followed by non-interactive custom event is a bounce" do
+      session =
+        create_session([
+          build(:pageview),
+          build(:event, name: "non-interactive", interactive?: false)
+        ])
+
+      assert session.is_bounce
+    end
+
+    test "non-interactive custom event followed by pageview is a bounce" do
+      session =
+        create_session([
+          build(:event, name: "non-interactive", interactive?: false),
+          build(:pageview)
+        ])
+
+      assert session.is_bounce
+    end
+
+    test "non-interactive custom event followed by interactive custom event is not a bounce" do
+      session =
+        create_session([
+          build(:event, name: "non-interactive", interactive?: false),
+          build(:event, name: "interactive")
+        ])
+
+      refute session.is_bounce
     end
   end
 
@@ -572,13 +629,25 @@ defmodule Plausible.Session.CacheStoreTest do
     Plausible.Session.WriteBuffer.flush()
   end
 
-  defp get_session(site_id) do
+  defp create_session(events) do
+    event_params = %{site_id: new_site_id(), user_id: 1}
+
+    events
+    |> Enum.map(&Map.merge(&1, event_params))
+    |> flush()
+
+    get_session(event_params.site_id, final: true)
+  end
+
+  defp get_session(site_id, opts \\ []) do
     session_q =
       from s in Plausible.ClickhouseSessionV2,
         where: s.site_id == ^site_id,
-        order_by: [desc: :timestamp],
+        order_by: [desc: :events],
         limit: 1
 
-    Plausible.ClickhouseRepo.one!(session_q)
+    settings = [final: Keyword.get(opts, :final, true)]
+
+    Plausible.ClickhouseRepo.one!(session_q, settings: settings)
   end
 end

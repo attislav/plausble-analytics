@@ -27,11 +27,11 @@ defmodule PlausibleWeb.Live.Components.ComboBoxTest do
       options = new_options(10)
       assert doc = render_sample_component(options, selected: List.last(options))
 
-      assert element_exists?(doc, "input[type=hidden][name=test-submit-name][value=10]")
+      assert element_exists?(doc, ~s|input[type="hidden"][name="test-submit-name"][value="10"]|)
 
       assert element_exists?(
                doc,
-               ~s|input[type=text][name=display-test-component][value="TestOption 10"]|
+               ~s|input[type="text"][name="display-test-component"][value="TestOption 10"]|
              )
     end
 
@@ -56,7 +56,7 @@ defmodule PlausibleWeb.Live.Components.ComboBoxTest do
       refute element_exists?(doc, suggestion_li(16))
       refute element_exists?(doc, suggestion_li(17))
 
-      assert Floki.text(doc) =~ "Max results reached"
+      assert text(doc) =~ "Max results reached"
     end
 
     test "renders up to n suggestions if provided" do
@@ -71,8 +71,8 @@ defmodule PlausibleWeb.Live.Components.ComboBoxTest do
 
     test "Alpine.js: renders attrs focusing suggestion elements" do
       assert doc = render_sample_component(new_options(10))
-      li1 = doc |> find(suggestion_li(1)) |> List.first()
-      li2 = doc |> find(suggestion_li(2)) |> List.first()
+      li1 = doc |> find(suggestion_li(1))
+      li2 = doc |> find(suggestion_li(2))
 
       assert text_of_attr(li1, "@mouseenter") == "setFocus(1)"
       assert text_of_attr(li2, "@mouseenter") == "setFocus(2)"
@@ -204,7 +204,7 @@ defmodule PlausibleWeb.Live.Components.ComboBoxTest do
         |> element("li#dropdown-test-component-option-1 a")
         |> render_click()
 
-      assert element_exists?(doc, "input[type=hidden][name=some_submit_name][value=20]")
+      assert element_exists?(doc, ~s|input[type="hidden"][name="some_submit_name"][value="20"]|)
     end
 
     test "limits the suggestions", %{conn: conn} do
@@ -254,7 +254,7 @@ defmodule PlausibleWeb.Live.Components.ComboBoxTest do
         |> element("li#dropdown-test-creatable-component-option-1 a")
         |> render_click()
 
-      assert element_exists?(doc, "input[type=hidden][name=some_submit_name][value=20]")
+      assert element_exists?(doc, ~s|input[type="hidden"][name="some_submit_name"][value="20"]|)
     end
 
     test "suggests creating custom value", %{conn: conn} do
@@ -303,14 +303,14 @@ defmodule PlausibleWeb.Live.Components.ComboBoxTest do
       {:ok, lv, html} = live_isolated(conn, CreatableView, session: %{})
       regular_option = find(html, "li#dropdown-test-creatable-component-option-1 a")
 
-      assert Floki.attribute(regular_option, "x-on:click") == ["selectionInProgress = true"]
+      assert text_of_attr(regular_option, "x-on:click") == "selectionInProgress = true"
 
       creatable_option =
         lv
         |> type_into_combo("test-creatable-component", "my new option")
         |> find("input[type=hidden][name=some_submit_name][value=\"my new option\"]")
 
-      assert Floki.attribute(creatable_option, "x-on:click") == []
+      assert text_of_attr(creatable_option, "x-on:click") == nil
     end
   end
 
@@ -361,11 +361,21 @@ defmodule PlausibleWeb.Live.Components.ComboBoxTest do
     test "pre-fills the suggestions asynchronously", %{conn: conn} do
       {:ok, lv, doc} = live_isolated(conn, SampleViewAsync, session: %{})
       refute element_exists?(doc, "#dropdown-test-component-option-1")
-      :timer.sleep(1000)
-      doc = render(lv)
-      assert text_of_element(doc, "#dropdown-test-component-option-1") == "One"
-      assert text_of_element(doc, "#dropdown-test-component-option-2") == "Two"
-      assert text_of_element(doc, "#dropdown-test-component-option-3") == "Three"
+
+      assert eventually(
+               fn ->
+                 doc = render(lv)
+
+                 {
+                   text_of_element(doc, "#dropdown-test-component-option-1") == "One" &&
+                     text_of_element(doc, "#dropdown-test-component-option-2") == "Two" &&
+                     text_of_element(doc, "#dropdown-test-component-option-3") == "Three",
+                   true
+                 }
+               end,
+               200,
+               20
+             )
     end
 
     @tag :slow
@@ -373,10 +383,20 @@ defmodule PlausibleWeb.Live.Components.ComboBoxTest do
       {:ok, lv, _html} = live_isolated(conn, SampleViewAsync, session: %{})
       doc = type_into_combo(lv, "test-component", "Echo me")
       refute element_exists?(doc, "#dropdown-test-component-option-1")
-      :timer.sleep(1000)
-      doc = render(lv)
-      assert element_exists?(doc, "#dropdown-test-component-option-1")
-      assert text_of_element(doc, "#dropdown-test-component-option-1") == "Echo me"
+
+      assert eventually(
+               fn ->
+                 doc = render(lv)
+
+                 {
+                   element_exists?(doc, "#dropdown-test-component-option-1") &&
+                     text_of_element(doc, "#dropdown-test-component-option-1") == "Echo me",
+                   true
+                 }
+               end,
+               200,
+               20
+             )
     end
   end
 

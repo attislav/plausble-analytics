@@ -33,8 +33,8 @@ defmodule PlausibleWeb.Live.Shields.PageRules do
     <div>
       <.settings_tiles>
         <.tile docs="top-pages#block-traffic-from-specific-pages-or-sections">
-          <:title>Pages Block List</:title>
-          <:subtitle>Reject incoming traffic for specific pages</:subtitle>
+          <:title>Pages block list</:title>
+          <:subtitle>Reject incoming traffic for specific pages.</:subtitle>
           <.filter_bar
             :if={@page_rules_count < Shields.maximum_page_rules()}
             filtering_enabled?={false}
@@ -45,7 +45,7 @@ defmodule PlausibleWeb.Live.Shields.PageRules do
               x-on:click={Modal.JS.open("page-rule-form-modal")}
               mt?={false}
             >
-              Add Page
+              Add page
             </.button>
           </.filter_bar>
 
@@ -61,7 +61,7 @@ defmodule PlausibleWeb.Live.Shields.PageRules do
           </.notice>
 
           <p :if={Enum.empty?(@page_rules)} class="mt-12 mb-8 text-center text-sm">
-            No Page Rules configured for this site.
+            No page rules configured for this site.
           </p>
 
           <.table :if={not Enum.empty?(@page_rules)} rows={@page_rules}>
@@ -115,9 +115,9 @@ defmodule PlausibleWeb.Live.Shields.PageRules do
               for={@form}
               phx-submit="save-page-rule"
               phx-target={@myself}
-              class="max-w-md w-full mx-auto bg-white dark:bg-gray-800"
+              class="max-w-md w-full mx-auto"
             >
-              <.title>Add Page to Block List</.title>
+              <.title>Add page to block list</.title>
 
               <.live_component
                 class="mt-4"
@@ -125,7 +125,9 @@ defmodule PlausibleWeb.Live.Shields.PageRules do
                 submit_value={f[:page_path].value}
                 display_value={f[:page_path].value || ""}
                 module={PlausibleWeb.Live.Components.ComboBox}
-                suggest_fun={fn input, options -> suggest_page_paths(input, options, @site) end}
+                suggest_fun={
+                  fn input, options -> suggest_page_paths(input, options, @site, @page_rules) end
+                }
                 id={"#{f[:page_path].id}-#{modal_unique_id}"}
                 creatable
               />
@@ -139,7 +141,7 @@ defmodule PlausibleWeb.Live.Shields.PageRules do
                 Once added, we will start rejecting traffic from this page within a few minutes.
               </p>
               <.button type="submit" class="w-full">
-                Add Page
+                Add page
               </.button>
             </.form>
           </.live_component>
@@ -217,8 +219,18 @@ defmodule PlausibleWeb.Live.Shields.PageRules do
     |> Calendar.strftime("%Y-%m-%d %H:%M:%S")
   end
 
-  def suggest_page_paths(input, _options, site) do
-    query = Plausible.Stats.Query.from(site, %{})
+  def suggest_page_paths(input, _options, site, page_rules) do
+    query =
+      Plausible.Stats.Query.build!(
+        site,
+        :internal,
+        %{
+          "site_id" => site.domain,
+          "date_range" => "all",
+          "metrics" => ["pageviews"],
+          "filters" => [["is_not", "event:page", Enum.map(page_rules, & &1.page_path)]]
+        }
+      )
 
     site
     |> Plausible.Stats.filter_suggestions(query, "page", input)

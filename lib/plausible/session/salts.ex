@@ -20,8 +20,13 @@ defmodule Plausible.Session.Salts do
         {:read_concurrency, true}
       ])
 
-    salts =
-      Repo.all(from s in "salts", select: s.salt, order_by: [desc: s.inserted_at], limit: 2)
+    refresh(name, now)
+
+    {:ok, name}
+  end
+
+  def refresh(name, now) do
+    salts = Repo.all(from s in "salts", select: s.salt, order_by: [desc: s.id], limit: 2)
 
     state =
       case salts do
@@ -37,11 +42,18 @@ defmodule Plausible.Session.Salts do
       end
 
     true = :ets.insert(name, {:state, state})
-    {:ok, name}
+    interval = Application.get_env(:plausible, __MODULE__)[:interval] || :timer.seconds(90)
+    Process.send_after(self(), {:refresh, now}, interval)
+    :ok
   end
 
   def rotate(name \\ __MODULE__, now \\ DateTime.utc_now()) do
     GenServer.call(name, {:rotate, now})
+  end
+
+  def fetch(name \\ __MODULE__) do
+    [state: state] = :ets.lookup(name, :state)
+    state
   end
 
   @impl true
@@ -59,15 +71,14 @@ defmodule Plausible.Session.Salts do
     {:reply, :ok, name}
   end
 
-  def fetch(name \\ __MODULE__) do
-    [state: state] = :ets.lookup(name, :state)
-
-    state
+  @impl true
+  def handle_info({:refresh, now}, name) do
+    refresh(name, now)
+    {:noreply, name}
   end
 
   defp generate_and_persist_new_salt(now) do
     salt = :crypto.strong_rand_bytes(16)
-
     Repo.insert_all("salts", [%{salt: salt, inserted_at: now}])
     salt
   end

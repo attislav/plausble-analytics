@@ -10,17 +10,6 @@ defmodule Plausible.Segments.Segment do
 
   @type t() :: %__MODULE__{}
 
-  @derive {Jason.Encoder,
-           only: [
-             :id,
-             :name,
-             :type,
-             :segment_data,
-             :owner_id,
-             :inserted_at,
-             :updated_at
-           ]}
-
   schema "segments" do
     field :name, :string
     field :type, Ecto.Enum, values: @segment_types
@@ -197,9 +186,26 @@ defmodule Plausible.Segments.Segment do
   end
 
   defp dashboard_compatible_filter?(filter) do
-    is_list(filter) and length(filter) === 3 and
-      is_atom(Enum.at(filter, 0)) and
-      is_binary(Enum.at(filter, 1)) and
-      is_list(Enum.at(filter, 2))
+    case filter do
+      [operation, dimension, _clauses] when is_atom(operation) and is_binary(dimension) -> true
+      [:has_not_done, _] -> true
+      _ -> false
+    end
+  end
+end
+
+defimpl Jason.Encoder, for: Plausible.Segments.Segment do
+  def encode(%Plausible.Segments.Segment{} = segment, opts) do
+    %{
+      id: segment.id,
+      name: segment.name,
+      type: segment.type,
+      segment_data: segment.segment_data,
+      owner_id: segment.owner_id,
+      owner_name: if(is_nil(segment.owner_id), do: nil, else: segment.owner.name),
+      inserted_at: segment.inserted_at,
+      updated_at: segment.updated_at
+    }
+    |> Jason.Encode.map(opts)
   end
 end

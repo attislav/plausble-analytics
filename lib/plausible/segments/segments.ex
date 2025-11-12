@@ -6,31 +6,43 @@ defmodule Plausible.Segments do
   alias Plausible.Repo
   import Ecto.Query
 
-  @roles_with_personal_segments [:viewer, :editor, :admin, :owner, :super_admin]
+  @roles_with_personal_segments [:billing, :viewer, :editor, :admin, :owner, :super_admin]
   @roles_with_maybe_site_segments [:editor, :admin, :owner, :super_admin]
 
   @type error_not_enough_permissions() :: {:error, :not_enough_permissions}
   @type error_segment_not_found() :: {:error, :segment_not_found}
+  @type error_segment_limit_reached() :: {:error, :segment_limit_reached}
+  @type error_invalid_segment() :: {:error, {:invalid_segment, Keyword.t()}}
+  @type unknown_error() :: {:error, any()}
 
-  @spec index(pos_integer() | nil, Plausible.Site.t(), atom()) ::
-          {:ok, [Segment.t()]} | error_not_enough_permissions()
-  def index(user_id, %Plausible.Site{} = site, site_role) do
-    fields = [:id, :name, :type, :inserted_at, :updated_at, :owner_id]
+  @max_segments 500
 
-    site_segments_available? =
-      site_segments_available?(site)
+  def get_all_for_site(%Plausible.Site{} = site, site_role) do
+    fields = [:id, :name, :type, :inserted_at, :updated_at, :segment_data]
 
     cond do
-      site_role in [:public] and
-          site_segments_available? ->
-        {:ok, get_public_site_segments(site.id, fields -- [:owner_id])}
+      site_role in [:public] ->
+        {:ok,
+         Repo.all(
+           from(segment in Segment,
+             select: ^fields,
+             where: segment.site_id == ^site.id,
+             order_by: [desc: segment.updated_at, desc: segment.id]
+           )
+         )}
 
-      site_role in @roles_with_maybe_site_segments and
-          site_segments_available? ->
-        {:ok, get_segments(user_id, site.id, fields)}
+      site_role in @roles_with_personal_segments or site_role in @roles_with_maybe_site_segments ->
+        fields = fields ++ [:owner_id]
 
-      site_role in @roles_with_personal_segments ->
-        {:ok, get_segments(user_id, site.id, fields, only: :personal)}
+        {:ok,
+         Repo.all(
+           from(segment in Segment,
+             select: ^fields,
+             where: segment.site_id == ^site.id,
+             order_by: [desc: segment.updated_at, desc: segment.id],
+             preload: [:owner]
+           )
+         )}
 
       true ->
         {:error, :not_enough_permissions}
@@ -73,6 +85,13 @@ defmodule Plausible.Segments do
     end
   end
 
+  @spec insert_one(pos_integer(), Plausible.Site.t(), atom(), map()) ::
+          {:ok, Segment.t()}
+          | error_not_enough_permissions()
+          | error_invalid_segment()
+          | error_segment_limit_reached()
+          | unknown_error()
+
   def insert_one(
         user_id,
         %Plausible.Site{} = site,
@@ -87,7 +106,7 @@ defmodule Plausible.Segments do
            ),
          :ok <-
            Segment.validate_segment_data(site, params["segment_data"], true) do
-      {:ok, Repo.insert!(changeset)}
+      {:ok, changeset |> Repo.insert!() |> Repo.preload(:owner)}
     else
       %{valid?: false, errors: errors} ->
         {:error, {:invalid_segment, errors}}
@@ -99,6 +118,12 @@ defmodule Plausible.Segments do
         error
     end
   end
+
+  @spec update_one(pos_integer(), Plausible.Site.t(), atom(), pos_integer(), map()) ::
+          {:ok, Segment.t()}
+          | error_not_enough_permissions()
+          | error_invalid_segment()
+          | unknown_error()
 
   def update_one(
         user_id,
@@ -120,11 +145,9 @@ defmodule Plausible.Segments do
              params["segment_data"],
              true
            ) do
-      {:ok,
-       Repo.update!(
-         changeset,
-         returning: true
-       )}
+      Repo.update!(changeset)
+
+      {:ok, Repo.reload!(segment) |> Repo.preload(:owner)}
     else
       %{valid?: false, errors: errors} ->
         {:error, {:invalid_segment, errors}}
@@ -185,6 +208,64 @@ defmodule Plausible.Segments do
     :ok
   end
 
+  def after_user_removed_from_site(site, user) do
+    Repo.delete_all(
+      from segment in Segment,
+        where: segment.site_id == ^site.id,
+        where: segment.owner_id == ^user.id,
+        where: segment.type == :personal
+    )
+
+    Repo.update_all(
+      from(segment in Segment,
+        where: segment.site_id == ^site.id,
+        where: segment.owner_id == ^user.id,
+        where: segment.type == :site,
+        update: [set: [owner_id: nil]]
+      ),
+      []
+    )
+  end
+
+  def after_user_removed_from_team(team, user) do
+    team_sites_q =
+      from(
+        site in Plausible.Site,
+        where: site.team_id == ^team.id,
+        where: parent_as(:segment).site_id == site.id
+      )
+
+    Repo.delete_all(
+      from segment in Segment,
+        as: :segment,
+        where: segment.owner_id == ^user.id,
+        where: segment.type == :personal,
+        where: exists(team_sites_q)
+    )
+
+    Repo.update_all(
+      from(segment in Segment,
+        as: :segment,
+        where: segment.owner_id == ^user.id,
+        where: segment.type == :site,
+        where: exists(team_sites_q),
+        update: [set: [owner_id: nil]]
+      ),
+      []
+    )
+  end
+
+  def user_removed(user) do
+    Repo.delete_all(
+      from segment in Segment,
+        as: :segment,
+        where: segment.owner_id == ^user.id,
+        where: segment.type == :personal
+    )
+
+    #  Site segments are set to owner=null via ON DELETE SET NULL
+  end
+
   def delete_one(user_id, %Plausible.Site{} = site, site_role, segment_id) do
     with {:ok, segment} <- get_one(user_id, site, site_role, segment_id) do
       cond do
@@ -213,7 +294,8 @@ defmodule Plausible.Segments do
       from(segment in Segment,
         where: segment.site_id == ^site_id,
         where: segment.id == ^segment_id,
-        where: segment.type == :site or segment.owner_id == ^user_id
+        where: segment.type == :site or segment.owner_id == ^user_id,
+        preload: [:owner]
       )
 
     Repo.one(query)
@@ -244,6 +326,9 @@ defmodule Plausible.Segments do
 
   defp can_insert_one?(%Plausible.Site{} = site, site_role, params) do
     cond do
+      count_segments(site.id) >= @max_segments ->
+        {:error, :segment_limit_reached}
+
       params["type"] == "site" and site_role in roles_with_maybe_site_segments() and
           site_segments_available?(site) ->
         :ok
@@ -257,44 +342,31 @@ defmodule Plausible.Segments do
     end
   end
 
+  defp count_segments(site_id) do
+    from(segment in Segment,
+      where: segment.site_id == ^site_id
+    )
+    |> Repo.aggregate(:count, :id)
+  end
+
   def roles_with_personal_segments(), do: [:viewer, :editor, :admin, :owner, :super_admin]
   def roles_with_maybe_site_segments(), do: [:editor, :admin, :owner, :super_admin]
 
   def site_segments_available?(%Plausible.Site{} = site),
-    do: Plausible.Billing.Feature.Props.check_availability(site.team) == :ok
+    do: Plausible.Billing.Feature.SiteSegments.check_availability(site.team) == :ok
 
-  @spec get_public_site_segments(pos_integer(), list(atom())) :: [Segment.t()]
-  defp get_public_site_segments(site_id, fields) do
-    Repo.all(
-      from(segment in Segment,
-        select: ^fields,
-        where: segment.site_id == ^site_id,
-        where: segment.type == :site,
-        order_by: [desc: segment.updated_at, desc: segment.id]
-      )
-    )
-  end
+  @doc """
+  iex> serialize_first_error([{"name", {"should be at most %{count} byte(s)", [count: 255]}}])
+  "name should be at most 255 byte(s)"
+  """
+  def serialize_first_error(errors) do
+    {field, {message, opts}} = List.first(errors)
 
-  @spec get_segments(pos_integer(), pos_integer(), list(atom()), Keyword.t()) :: [Segment.t()]
-  defp get_segments(user_id, site_id, fields, opts \\ []) do
-    query =
-      from(segment in Segment,
-        select: ^fields,
-        where: segment.site_id == ^site_id,
-        order_by: [desc: segment.updated_at, desc: segment.id]
-      )
+    formatted_message =
+      Enum.reduce(opts, message, fn {key, value}, acc ->
+        String.replace(acc, "%{#{key}}", to_string(value))
+      end)
 
-    query =
-      if Keyword.get(opts, :only) == :personal do
-        where(query, [segment], segment.type == :personal and segment.owner_id == ^user_id)
-      else
-        where(
-          query,
-          [segment],
-          segment.type == :site or (segment.type == :personal and segment.owner_id == ^user_id)
-        )
-      end
-
-    Repo.all(query)
+    "#{field} #{formatted_message}"
   end
 end

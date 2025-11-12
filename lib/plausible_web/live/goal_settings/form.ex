@@ -35,6 +35,7 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
         event_name_options_count: length(assigns.event_name_options),
         event_name_options: Enum.map(assigns.event_name_options, &{&1, &1}),
         current_user: assigns.current_user,
+        site_role: assigns.site_role,
         site_team: assigns.site_team,
         domain: assigns.domain,
         selected_tab: selected_tab,
@@ -65,13 +66,13 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
   def edit_form(assigns) do
     ~H"""
     <.form :let={f} for={@form} phx-submit="save-goal" phx-target={@myself}>
-      <.title>Edit Goal for {@domain}</.title>
+      <.title>Edit goal for {@domain}</.title>
 
       <.custom_event_fields
         :if={@selected_tab == "custom_events"}
         f={f}
         suffix={@context_unique_id}
-        current_user={@current_user}
+        site_role={@site_role}
         site_team={@site_team}
         site={@site}
         goal={@goal}
@@ -95,7 +96,7 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
       />
 
       <.button type="submit" class="w-full">
-        Update Goal
+        Update goal
       </.button>
     </.form>
     """
@@ -110,9 +111,9 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
       phx-submit="save-goal"
       phx-target={@myself}
     >
-      <.spinner class="spinner block absolute right-9 top-8" x-show="tabSelectionInProgress" />
-
-      <.title>Add Goal for {@domain}</.title>
+      <.title>
+        Add goal for {Plausible.Sites.display_name(@site)}
+      </.title>
 
       <.tabs current_user={@current_user} site={@site} selected_tab={@selected_tab} myself={@myself} />
 
@@ -121,7 +122,7 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
         x-show="!tabSelectionInProgress"
         f={f}
         suffix={suffix(@context_unique_id, @tab_sequence_id)}
-        current_user={@current_user}
+        site_role={@site_role}
         site_team={@site_team}
         site={@site}
         existing_goals={@existing_goals}
@@ -148,7 +149,7 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
 
       <div x-show="!tabSelectionInProgress">
         <.button type="submit" class="w-full">
-          Add Goal
+          Add goal
         </.button>
       </div>
 
@@ -179,8 +180,17 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
   def pageview_fields(assigns) do
     ~H"""
     <div id="pageviews-form" class="py-2" {@rest}>
+      <div class="text-sm pb-6 text-gray-500 dark:text-gray-400 text-justify rounded-md">
+        Pageview goals allow you to measure how many people visit a specific page or section of your site. Learn more in <.styled_link
+          href="https://plausible.io/docs/pageview-goals"
+          new_tab={true}
+        >
+          our docs
+        </.styled_link>.
+      </div>
+
       <.label for={"page_path_input_#{@suffix}"}>
-        Page Path
+        Page path
       </.label>
 
       <.live_component
@@ -201,7 +211,7 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
       </.error>
 
       <.input
-        label="Display Name"
+        label="Display name"
         id="pageview_display_name_input"
         field={@f[:display_name]}
         type="text"
@@ -248,8 +258,17 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
 
     ~H"""
     <div id="scroll-form" class="py-2" x-data={@js} {@rest}>
+      <div class="text-sm pb-6 text-gray-500 dark:text-gray-400 text-justify rounded-md">
+        Scroll Depth goals allow you to see how many people scroll beyond your desired scroll depth percentage threshold. Learn more in <.styled_link
+          href="https://plausible.io/docs/scroll-depth"
+          new_tab={true}
+        >
+          our docs
+        </.styled_link>.
+      </div>
+
       <.label for={"scroll_threshold_input_#{@suffix}"}>
-        Scroll Percentage Threshold (1-100)
+        Scroll percentage threshold (1-100)
       </.label>
 
       <.input
@@ -265,7 +284,7 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
       />
 
       <.label for={"scroll_page_path_input_#{@suffix}"} class="mt-3">
-        Page Path
+        Page path
       </.label>
 
       <.live_component
@@ -286,7 +305,7 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
       </.error>
 
       <.input
-        label="Display Name"
+        label="Display name"
         id="scroll_display_name_input"
         field={@f[:display_name]}
         type="text"
@@ -300,7 +319,7 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
 
   attr(:f, Phoenix.HTML.Form)
   attr(:site, Plausible.Site)
-  attr(:current_user, Plausible.Auth.User)
+  attr(:site_role, :atom)
   attr(:site_team, Plausible.Teams.Team)
   attr(:suffix, :string)
   attr(:existing_goals, :list)
@@ -312,18 +331,20 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
 
   def custom_event_fields(assigns) do
     ~H"""
-    <div id="custom-events-form" class="my-6" {@rest}>
+    <div id="custom-events-form" class="py-2" {@rest}>
       <div id="event-fields">
         <div class="text-sm pb-6 text-gray-500 dark:text-gray-400 text-justify rounded-md">
-          Custom Events are not tracked by default - you have to configure them on your site to be sent to Plausible. See examples and learn more in
-          <.styled_link href="https://plausible.io/docs/custom-event-goals" new_tab={true}>
+          Custom Events are not tracked by default - you have to configure them on your site to be sent to Plausible. See examples and learn more in <.styled_link
+            href="https://plausible.io/docs/custom-event-goals"
+            new_tab={true}
+          >
             our docs
           </.styled_link>.
         </div>
 
         <div>
           <.label for={"event_name_input_#{@suffix}"}>
-            Event Name
+            Event name
           </.label>
 
           <.live_component
@@ -348,7 +369,7 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
 
         <div class="mt-2">
           <.input
-            label="Display Name"
+            label="Display name"
             id="custom_event_display_name_input"
             field={@f[:display_name]}
             type="text"
@@ -357,16 +378,19 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
           />
         </div>
 
-        <.revenue_goal_settings
-          :if={ee?()}
-          f={@f}
-          site={@site}
-          current_user={@current_user}
-          site_team={@site_team}
-          has_access_to_revenue_goals?={@has_access_to_revenue_goals?}
-          goal={@goal}
-          suffix={@suffix}
-        />
+        <%= if ee?() and Plausible.Sites.regular?(@site) and not editing_non_revenue_goal?(assigns) do %>
+          <.revenue_goal_settings
+            f={@f}
+            site={@site}
+            site_role={@site_role}
+            site_team={@site_team}
+            has_access_to_revenue_goals?={@has_access_to_revenue_goals?}
+            goal={@goal}
+            suffix={@suffix}
+          />
+        <% else %>
+          <div class="h-2"></div>
+        <% end %>
       </div>
     </div>
     """
@@ -382,58 +406,20 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
     assigns = assign(assigns, selected_currency: currency_option(assigns.goal), js_data: js_data)
 
     ~H"""
-    <div class="mt-6 space-y-3" x-data={@js_data}>
-      <PlausibleWeb.Components.Billing.Notice.premium_feature
-        billable_user={List.first(@site.owners)}
-        current_user={@current_user}
-        current_team={@site_team}
-        feature_mod={Plausible.Billing.Feature.RevenueGoals}
-        class="rounded-b-md"
-      />
-      <button
-        id={"currency-toggle-#{@suffix}"}
-        class={[
-          "flex items-center w-max mb-3",
-          if @has_access_to_revenue_goals? and is_nil(@goal) do
-            "cursor-pointer"
-          else
-            "cursor-not-allowed"
-          end
-        ]}
-        aria-labelledby="enable-revenue-tracking"
-        role="switch"
-        type="button"
-        x-on:click="active = !active; currency = ''"
-        x-bind:aria-checked="active"
-        disabled={not @has_access_to_revenue_goals? or not is_nil(@goal)}
-      >
-        <span
-          id={"currency-container1-#{@suffix}"}
-          class="relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2"
-          x-bind:class="active ? 'bg-indigo-600' : 'dark:bg-gray-700 bg-gray-200'"
+    <div x-data={@js_data} data-test-id="revenue-goal-settings">
+      <%= if is_nil(@goal) do %>
+        <div class="mt-6 mb-3">
+          <.revenue_toggle {assigns} />
+        </div>
+      <% else %>
+        <label
+          data-test-id="goal-currency-label"
+          class="mt-4 mb-2 text-sm block font-medium dark:text-gray-100"
         >
-          <span
-            id={"currency-container2-#{@suffix}"}
-            aria-hidden="true"
-            class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-            x-bind:class="active ? 'dark:bg-gray-800 translate-x-5' : 'dark:bg-gray-800 translate-x-0'"
-          />
-        </span>
-        <span
-          class={[
-            "ml-3 text-sm font-medium",
-            if(@has_access_to_revenue_goals?,
-              do: "text-gray-900  dark:text-gray-100",
-              else: "text-gray-500 dark:text-gray-400"
-            )
-          ]}
-          id="enable-revenue-tracking"
-        >
-          Enable Revenue Tracking
-        </span>
-      </button>
-
-      <div x-show="active" id={"revenue-input-#{@suffix}"}>
+          Currency
+        </label>
+      <% end %>
+      <div class="mb-2" x-show="active" id={"revenue-input-#{@suffix}"}>
         <.live_component
           id={"currency_input_#{@suffix}"}
           submit_name={@f[:currency].name}
@@ -458,73 +444,58 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
 
   def tabs(assigns) do
     ~H"""
-    <div class="text-sm mt-6 font-medium dark:text-gray-100">Goal Trigger</div>
-    <div class="my-2 text-sm w-full flex rounded border border-gray-300 dark:border-gray-500 overflow-hidden">
-      <.custom_events_tab selected?={@selected_tab == "custom_events"} myself={@myself} />
-      <.pageviews_tab selected?={@selected_tab == "pageviews"} myself={@myself} />
-      <.scroll_tab
-        :if={Plausible.Stats.ScrollDepth.feature_visible?(@site, @current_user)}
+    <div class="text-sm mt-6 font-medium dark:text-gray-100">Goal trigger</div>
+    <div class="my-2 p-1 text-sm w-full flex gap-1 overflow-hidden rounded-lg border border-gray-300 dark:border-gray-700">
+      <.tab
+        id="event-tab"
+        tab_value="custom_events"
+        selected?={@selected_tab == "custom_events"}
+        myself={@myself}
+      >
+        Custom event
+      </.tab>
+      <.tab
+        id="pageview-tab"
+        tab_value="pageviews"
+        selected?={@selected_tab == "pageviews"}
+        myself={@myself}
+      >
+        Pageview
+      </.tab>
+      <.tab
+        id="scroll-tab"
+        tab_value="scroll"
         selected?={@selected_tab == "scroll"}
         myself={@myself}
-      />
+      >
+        Scroll depth
+      </.tab>
     </div>
     """
   end
 
-  defp custom_events_tab(assigns) do
+  attr(:id, :string, required: true)
+  attr(:tab_value, :string, required: true)
+  attr(:selected?, :boolean, required: true)
+  attr(:myself, :any, required: true)
+  slot(:inner_block, required: true)
+
+  defp tab(assigns) do
     ~H"""
     <a
       class={[
-        "flex-1 text-center py-2.5 border-r dark:border-gray-500",
+        "flex-1 text-center py-2 px-3 rounded-md font-medium hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors duration-150",
         "cursor-pointer",
-        @selected? && "shadow-inner font-medium bg-indigo-600 text-white",
-        !@selected? && "dark:text-gray-100 text-gray-800"
+        @selected? && "bg-gray-150 dark:bg-gray-700 text-gray-800 dark:text-white",
+        !@selected? && "dark:text-gray-200 text-gray-600 hover:text-gray-800 dark:hover:text-white"
       ]}
-      id="event-tab"
+      id={@id}
       x-on:click={!@selected? && "tabSelectionInProgress = true"}
       phx-click="switch-tab"
-      phx-value-tab="custom_events"
+      phx-value-tab={@tab_value}
       phx-target={@myself}
     >
-      Custom Event
-    </a>
-    """
-  end
-
-  def pageviews_tab(assigns) do
-    ~H"""
-    <a
-      class={[
-        "flex-1 text-center py-2.5 cursor-pointer",
-        @selected? && "shadow-inner font-medium bg-indigo-600 text-white",
-        !@selected? && "dark:text-gray-100 text-gray-800"
-      ]}
-      id="pageview-tab"
-      x-on:click={!@selected? && "tabSelectionInProgress = true"}
-      phx-click="switch-tab"
-      phx-value-tab="pageviews"
-      phx-target={@myself}
-    >
-      Pageview
-    </a>
-    """
-  end
-
-  def scroll_tab(assigns) do
-    ~H"""
-    <a
-      class={[
-        "flex-1 text-center py-2.5 cursor-pointer border-l dark:border-gray-500",
-        @selected? && "shadow-inner font-medium bg-indigo-600 text-white",
-        !@selected? && "dark:text-gray-100 text-gray-800"
-      ]}
-      id="scroll-tab"
-      x-on:click={!@selected? && "tabSelectionInProgress = true"}
-      phx-click="switch-tab"
-      phx-value-tab="scroll"
-      phx-target={@myself}
-    >
-      Scroll Depth
+      {render_slot(@inner_block)}
     </a>
     """
   end
@@ -574,7 +545,17 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
   end
 
   def suggest_page_paths(input, site) do
-    query = Plausible.Stats.Query.from(site, %{"with_imported" => "true", "period" => "all"})
+    query =
+      Plausible.Stats.Query.build!(
+        site,
+        :internal,
+        %{
+          "site_id" => site.domain,
+          "date_range" => "all",
+          "metrics" => ["pageviews"],
+          "include" => %{"imports" => true}
+        }
+      )
 
     site
     |> Plausible.Stats.filter_suggestions(query, "page", input)
@@ -605,5 +586,48 @@ defmodule PlausibleWeb.Live.GoalSettings.Form do
     end
   else
     defp currency_option(_), do: nil
+  end
+
+  defp revenue_toggle(assigns) do
+    ~H"""
+    <.tooltip enabled?={not @has_access_to_revenue_goals?}>
+      <:tooltip_content>
+        <div class="text-xs">
+          To get access to this feature
+          <PlausibleWeb.Components.Billing.upgrade_call_to_action
+            current_role={@site_role}
+            current_team={@site_team}
+          />.
+        </div>
+      </:tooltip_content>
+      <div class="flex itemx-center mb-3">
+        <PlausibleWeb.Components.Generic.toggle_switch
+          id="enable-revenue-tracking"
+          id_suffix={@suffix}
+          js_active_var="active"
+          disabled={not @has_access_to_revenue_goals?}
+        />
+        <span class={[
+          "ml-3 text-sm font-medium",
+          if(@has_access_to_revenue_goals?,
+            do: "text-gray-900 dark:text-gray-100",
+            else: "text-gray-500 dark:text-gray-400"
+          )
+        ]}>
+          Enable revenue tracking
+        </span>
+      </div>
+    </.tooltip>
+    """
+  end
+
+  on_ee do
+    defp editing_non_revenue_goal?(%{goal: nil} = _assigns), do: false
+
+    defp editing_non_revenue_goal?(%{goal: goal} = _assigns) do
+      not Plausible.Goal.Revenue.revenue?(goal)
+    end
+  else
+    defp editing_non_revenue_goal?(_assigns), do: false
   end
 end

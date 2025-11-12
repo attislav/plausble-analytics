@@ -10,7 +10,7 @@ defmodule PlausibleWeb.Plugs.UserSessionTouchTest do
   test "refreshes session", %{conn: conn, user: user} do
     now = NaiveDateTime.utc_now(:second)
     one_day_ago = NaiveDateTime.shift(now, day: -1)
-    %{sessions: [user_session]} = Repo.preload(user, :sessions)
+    %{sessions: [user_session]} = Repo.preload(user, sessions: :user)
 
     user_session
     |> Plausible.Auth.UserSession.touch_session(one_day_ago)
@@ -18,6 +18,7 @@ defmodule PlausibleWeb.Plugs.UserSessionTouchTest do
 
     assert %{assigns: %{current_user_session: user_session}} =
              conn
+             |> Plug.Conn.fetch_query_params()
              |> AuthPlug.call([])
              |> UserSessionTouch.call([])
 

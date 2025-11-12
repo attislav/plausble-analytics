@@ -17,7 +17,7 @@ config :plausible, Plausible.ClickhouseRepo,
 config :plausible, Plausible.Mailer, adapter: Bamboo.TestAdapter
 
 config :plausible,
-  paddle_api: Plausible.PaddleApi.Mock,
+  paddle_api: Plausible.Billing.TestPaddleApiMock,
   google_api: Plausible.Google.API.Mock
 
 config :bamboo, :refute_timeout, 10
@@ -25,6 +25,9 @@ config :bamboo, :refute_timeout, 10
 config :plausible,
   session_timeout: 0,
   http_impl: Plausible.HTTPClient.Mock
+
+config :plausible,
+  dns_lookup_impl: Plausible.DnsLookup.Mock
 
 config :plausible, Plausible.Cache, enabled: false
 
@@ -34,17 +37,29 @@ config :plausible, Plausible.Ingestion.Counters, enabled: false
 
 config :plausible, Oban, testing: :manual
 
-config :plausible, Plausible.Verification.Checks.FetchBody,
+config :plausible, Plausible.InstallationSupport.Checks.FetchBody,
   req_opts: [
-    plug: {Req.Test, Plausible.Verification.Checks.FetchBody}
+    plug: {Req.Test, Plausible.InstallationSupport.Checks.FetchBody}
   ]
 
-config :plausible, Plausible.Verification.Checks.Installation,
+config :plausible, Plausible.InstallationSupport.Checks.Installation,
   req_opts: [
-    plug: {Req.Test, Plausible.Verification.Checks.Installation}
+    plug: {Req.Test, Plausible.InstallationSupport.Checks.Installation}
   ]
 
 config :plausible, Plausible.HelpScout,
   req_opts: [
     plug: {Req.Test, Plausible.HelpScout}
   ]
+
+config :plausible, Plausible.InstallationSupport.Checks.Detection,
+  req_opts: [
+    plug: {Req.Test, Plausible.InstallationSupport.Checks.Detection}
+  ]
+
+config :plausible, Plausible.InstallationSupport.Checks.VerifyInstallation,
+  req_opts: [
+    plug: {Req.Test, Plausible.InstallationSupport.Checks.VerifyInstallation}
+  ]
+
+config :plausible, Plausible.Session.Salts, interval: :timer.hours(1)

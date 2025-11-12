@@ -168,6 +168,7 @@ defmodule Plausible.Teams.Invitations.InviteToTeamTest do
     @tag :ee_only
     test "returns error when owner is over their team member limit" do
       [owner, inviter, invitee] = for _ <- 1..3, do: new_user()
+      subscribe_to_growth_plan(owner)
       _site = new_site(owner: owner)
       team = team_of(owner)
       inviter = add_member(team, user: inviter, role: :admin)
@@ -212,7 +213,7 @@ defmodule Plausible.Teams.Invitations.InviteToTeamTest do
         team = team_of(owner)
         add_member(team, user: inviter, role: unquote(role))
 
-        assert {:error, :forbidden} =
+        assert {:error, :permission_denied} =
                  InviteToTeam.invite(team, inviter, invitee.email, :owner)
       end
     end

@@ -1,12 +1,9 @@
-/** @format */
-
 import React from 'react'
 import { Tooltip } from '../../util/tooltip'
 import { SecondsSinceLastLoad } from '../../util/seconds-since-last-load'
 import classNames from 'classnames'
 import * as storage from '../../util/storage'
 import { formatDateRange } from '../../util/date'
-import { getGraphableMetrics } from './graph-util'
 import { useQueryContext } from '../../query-context'
 import { useSiteContext } from '../../site-context'
 import { useLastLoadContext } from '../../last-load-context'
@@ -26,7 +23,12 @@ function topStatNumberLong(metric, value) {
   return formatter(value)
 }
 
-export default function TopStats({ data, onMetricUpdate, tooltipBoundary }) {
+export default function TopStats({
+  data,
+  onMetricUpdate,
+  tooltipBoundary,
+  graphableMetrics
+}) {
   const { query } = useQueryContext()
   const lastLoadTimestamp = useLastLoadContext()
   const site = useSiteContext()
@@ -35,6 +37,7 @@ export default function TopStats({ data, onMetricUpdate, tooltipBoundary }) {
 
   function tooltip(stat) {
     let statName = stat.name.toLowerCase()
+    const warning = warningText(stat.graph_metric, site)
     statName = stat.value === 1 ? statName.slice(0, -1) : statName
 
     return (
@@ -65,19 +68,34 @@ export default function TopStats({ data, onMetricUpdate, tooltipBoundary }) {
           </p>
         )}
 
-        {stat.name === 'Scroll depth' &&
-          data.meta.metric_warnings?.scroll_depth?.code ===
-            'no_imported_scroll_depth' && (
-            <p className="font-normal text-xs whitespace-nowrap">
-              * Does not include imported data
-            </p>
-          )}
+        {warning ? (
+          <p className="font-normal text-xs whitespace-nowrap">* {warning}</p>
+        ) : null}
       </div>
     )
   }
 
+  function warningText(metric) {
+    const warning = data.meta.metric_warnings?.[metric]
+    if (!warning) {
+      return null
+    }
+
+    if (
+      metric === 'scroll_depth' &&
+      warning.code === 'no_imported_scroll_depth'
+    ) {
+      return 'Does not include imported data'
+    }
+
+    if (metric === 'time_on_page') {
+      return warning.message
+    }
+
+    return null
+  }
+
   function canMetricBeGraphed(stat) {
-    const graphableMetrics = getGraphableMetrics(query, site)
     return graphableMetrics.includes(stat.graph_metric)
   }
 
@@ -108,9 +126,9 @@ export default function TopStats({ data, onMetricUpdate, tooltipBoundary }) {
     const [statDisplayName, statExtraName] = stat.name.split(/(\(.+\))/g)
 
     const statDisplayNameClass = classNames(
-      'text-xs font-bold tracking-wide text-gray-500 uppercase dark:text-gray-400 whitespace-nowrap flex w-content border-b',
+      'text-xs font-bold tracking-wide text-gray-500 uppercase dark:text-gray-400 whitespace-nowrap flex w-fit border-b',
       {
-        'text-indigo-700 dark:text-indigo-500 border-indigo-700 dark:border-indigo-500':
+        'text-indigo-600 dark:text-indigo-500 border-indigo-600 dark:border-indigo-500':
           isSelected,
         'group-hover:text-indigo-700 dark:group-hover:text-indigo-500 border-transparent':
           !isSelected
@@ -123,7 +141,9 @@ export default function TopStats({ data, onMetricUpdate, tooltipBoundary }) {
         {statExtraName && (
           <span className="hidden sm:inline-block ml-1">{statExtraName}</span>
         )}
-        {stat.warning_code && <span className="inline-block ml-1">*</span>}
+        {warningText(stat.graph_metric) && (
+          <span className="inline-block ml-1">*</span>
+        )}
       </div>
     )
   }
@@ -133,7 +153,7 @@ export default function TopStats({ data, onMetricUpdate, tooltipBoundary }) {
       'px-4 md:px-6 w-1/2 my-4 lg:w-auto group select-none',
       {
         'cursor-pointer': canMetricBeGraphed(stat),
-        'lg:border-l border-gray-300': index > 0,
+        'lg:border-l border-gray-300 dark:border-gray-700': index > 0,
         'border-r lg:border-r-0': index % 2 === 0
       }
     )

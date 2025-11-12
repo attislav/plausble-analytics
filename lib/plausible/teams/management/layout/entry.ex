@@ -5,7 +5,7 @@ defmodule Plausible.Teams.Management.Layout.Entry do
   """
   alias Plausible.Teams
 
-  defstruct [:email, :name, :role, :type, :meta, :queued_op]
+  defstruct [:email, :name, :role, :type, :meta, :queued_op, :id]
 
   @type t() :: %__MODULE__{}
 
@@ -19,6 +19,7 @@ defmodule Plausible.Teams.Management.Layout.Entry do
       when is_integer(existing) do
     %__MODULE__{
       name: "Invited User",
+      id: 0,
       email: invitation.email,
       role: invitation.role,
       type: :invitation_sent,
@@ -30,6 +31,7 @@ defmodule Plausible.Teams.Management.Layout.Entry do
   def new(%Teams.Invitation{id: nil} = pending, attrs) do
     %__MODULE__{
       name: "Invited User",
+      id: 0,
       email: pending.email,
       role: pending.role,
       type: :invitation_pending,
@@ -42,6 +44,7 @@ defmodule Plausible.Teams.Management.Layout.Entry do
     %__MODULE__{
       name: membership.user.name,
       role: membership.role,
+      id: membership.user.id,
       email: membership.user.email,
       type: :membership,
       meta: membership
@@ -69,7 +72,7 @@ defmodule Plausible.Teams.Management.Layout.Entry do
         context
       )
       when op in [:update, :send] do
-    Teams.Invitations.InviteToTeam.invite(context.my_team, context.current_user, email, role,
+    Teams.Invitations.InviteToTeam.invite(context.current_team, context.current_user, email, role,
       send_email?: false
     )
   end
@@ -78,7 +81,7 @@ defmodule Plausible.Teams.Management.Layout.Entry do
         %__MODULE__{type: :invitation_sent, email: email, role: role, queued_op: :update},
         context
       ) do
-    Teams.Invitations.InviteToTeam.invite(context.my_team, context.current_user, email, role,
+    Teams.Invitations.InviteToTeam.invite(context.current_team, context.current_user, email, role,
       send_email?: false
     )
   end
@@ -87,8 +90,8 @@ defmodule Plausible.Teams.Management.Layout.Entry do
         %__MODULE__{type: :invitation_sent, queued_op: :delete, meta: meta},
         context
       ) do
-    Plausible.Teams.Invitations.Remove.remove(
-      context.my_team,
+    Plausible.Teams.Invitations.RemoveFromTeam.remove(
+      context.current_team,
       meta.invitation_id,
       context.current_user
     )
@@ -99,7 +102,7 @@ defmodule Plausible.Teams.Management.Layout.Entry do
         context
       ) do
     Plausible.Teams.Memberships.Remove.remove(
-      context.my_team,
+      context.current_team,
       meta.user.id,
       context.current_user,
       send_email?: false
@@ -111,7 +114,7 @@ defmodule Plausible.Teams.Management.Layout.Entry do
         context
       ) do
     Plausible.Teams.Memberships.UpdateRole.update(
-      context.my_team,
+      context.current_team,
       meta.user.id,
       "#{role}",
       context.current_user

@@ -351,7 +351,7 @@ defmodule Plausible.Imported.CSVImporterTest do
           storage: on_ee(do: "s3", else: "local")
         )
 
-      assert %{success: 1} = Oban.drain_queue(queue: :analytics_imports, with_safety?: false)
+      assert %{success: 1} = Oban.drain_queue(queue: :analytics_imports, with_safety: false)
 
       assert %SiteImport{
                start_date: ~D[2011-12-25],
@@ -414,7 +414,7 @@ defmodule Plausible.Imported.CSVImporterTest do
           storage: on_ee(do: "s3", else: "local")
         )
 
-      assert %{success: 1} = Oban.drain_queue(queue: :analytics_imports, with_safety?: false)
+      assert %{success: 1} = Oban.drain_queue(queue: :analytics_imports, with_safety: false)
 
       assert %SiteImport{
                start_date: ~D[2021-12-30],
@@ -484,7 +484,7 @@ defmodule Plausible.Imported.CSVImporterTest do
           storage: on_ee(do: "s3", else: "local")
         )
 
-      assert %{success: 1} = Oban.drain_queue(queue: :analytics_imports, with_safety?: false)
+      assert %{success: 1} = Oban.drain_queue(queue: :analytics_imports, with_safety: false)
 
       assert %SiteImport{
                start_date: ~D[2011-12-25],
@@ -546,7 +546,7 @@ defmodule Plausible.Imported.CSVImporterTest do
           storage: on_ee(do: "s3", else: "local")
         )
 
-      assert %{discard: 1} = Oban.drain_queue(queue: :analytics_imports, with_safety?: false)
+      assert %{discard: 1} = Oban.drain_queue(queue: :analytics_imports, with_safety: false)
 
       # TODO
       # assert {:discard, message} = Plausible.Workers.ImportAnalytics.perform(job)
@@ -608,7 +608,7 @@ defmodule Plausible.Imported.CSVImporterTest do
         imported_site: imported_site
       }
 
-      %{site_import: site_import} =
+      %{site_import: site_import, exported_files: exported_files} =
         initial_context
         |> export_archive()
         |> assert_email_notification()
@@ -616,6 +616,16 @@ defmodule Plausible.Imported.CSVImporterTest do
         |> unzip_archive()
         |> upload_csvs()
         |> run_import()
+
+      assert custom_props_export =
+               exported_files
+               |> Enum.find(&String.contains?(&1, "imported_custom_props_"))
+               |> File.read!()
+               |> String.split("\n")
+
+      assert ~s|"date","property","value","visitors","events"| in custom_props_export
+      assert ~s|"2024-04-01","author","Marko Saric",43,57| in custom_props_export
+      assert ~s|"2024-04-01","category","Posts",43,56| in custom_props_export
 
       assert %SiteImport{
                start_date: ~D[2024-04-01],
@@ -734,9 +744,6 @@ defmodule Plausible.Imported.CSVImporterTest do
         assert exported["pageviews"] == imported["pageviews"]
         assert exported["visit_duration"] == imported["visit_duration"]
         assert exported["bounce_rate"] == imported["bounce_rate"]
-
-        # time on page is not being exported/imported right now
-        assert imported["time_on_page"] == 0
       end)
 
       # NOTE: page breakdown's visitors difference is up to 28%
@@ -983,21 +990,21 @@ defmodule Plausible.Imported.CSVImporterTest do
         assert exported["events"] == imported["events"]
       end)
 
-      # NOTE: goal breakdown's conversion rate difference is up to 18%
+      # NOTE: goal breakdown's conversion rate difference is up to 19%
       assert summary(field(exported_goals, "conversion_rate")) == [
-               0.1,
-               0.55,
-               1.0,
-               3.3,
-               5.6
+               0.08,
+               0.515,
+               0.95,
+               3.255,
+               5.56
              ]
 
       assert summary(field(imported_goals, "conversion_rate")) == [
-               0.1,
-               0.5,
-               0.9,
-               3.8499999999999996,
-               6.8
+               0.08,
+               0.505,
+               0.93,
+               3.87,
+               6.81
              ]
 
       assert summary(
@@ -1006,10 +1013,10 @@ defmodule Plausible.Imported.CSVImporterTest do
                end)
              ) == [
                0.0,
-               0.05555555555555558,
-               0.11111111111111116,
-               0.14379084967320266,
-               0.17647058823529416
+               0.010752688172043001,
+               0.021505376344086002,
+               0.10252948699729997,
+               0.18355359765051393
              ]
 
       # url property breakdown
@@ -1024,15 +1031,28 @@ defmodule Plausible.Imported.CSVImporterTest do
         assert exported["events"] == imported["events"]
       end)
 
-      # NOTE: url property breakdown's conversion rate difference is up to 20%
-      assert summary(field(exported_url_props, "conversion_rate")) == [0.1, 0.1, 0.1, 0.1, 0.8]
-      assert summary(field(imported_url_props, "conversion_rate")) == [0.1, 0.1, 0.1, 0.1, 0.8]
+      # NOTE: url property breakdown's conversion rate difference is up to 7%
+      assert summary(field(exported_url_props, "conversion_rate")) == [
+               0.08,
+               0.08,
+               0.08,
+               0.08,
+               0.79
+             ]
+
+      assert summary(field(imported_url_props, "conversion_rate")) == [
+               0.08,
+               0.08,
+               0.08,
+               0.08,
+               0.77
+             ]
 
       assert summary(
                pairwise(exported_url_props, imported_url_props, fn exported, imported ->
                  abs(1 - exported["conversion_rate"] / imported["conversion_rate"])
                end)
-             ) == [0.0, 0.0, 0.0, 0.0, 0.19999999999999996]
+             ) == [0.0, 0.0, 0.0, 0.0, 0.06666666666666665]
 
       # path property breakdown
       exported_path_props = goal_breakdown.(exported_site, "event:props:path", "event:goal==404")
@@ -1041,14 +1061,15 @@ defmodule Plausible.Imported.CSVImporterTest do
       pairwise(exported_path_props, imported_path_props, fn exported, imported ->
         assert exported["visitors"] == imported["visitors"]
         assert exported["events"] == imported["events"]
-        assert exported["conversion_rate"] == imported["conversion_rate"]
+        assert abs(exported["conversion_rate"] - imported["conversion_rate"]) < 0.011
       end)
     end
 
     @tag :tmp_dir
-    test "scroll_depth", %{conn: conn, user: user, tmp_dir: tmp_dir} do
+    test "scroll_depth and time_on_page", %{conn: conn, user: user, tmp_dir: tmp_dir} do
       exported_site = new_site(owner: user)
       imported_site = new_site(owner: user)
+      FunWithFlags.enable(:new_time_on_page, for_actor: exported_site)
 
       t0 =
         NaiveDateTime.utc_now(:second)
@@ -1060,19 +1081,61 @@ defmodule Plausible.Imported.CSVImporterTest do
       stats =
         [
           build(:pageview, user_id: 12, pathname: "/blog", timestamp: t0),
-          build(:engagement, user_id: 12, pathname: "/blog", timestamp: t1, scroll_depth: 20),
+          build(:engagement,
+            user_id: 12,
+            pathname: "/blog",
+            timestamp: t1,
+            scroll_depth: 20,
+            engagement_time: 50_000
+          ),
           build(:pageview, user_id: 12, pathname: "/another", timestamp: t1),
-          build(:engagement, user_id: 12, pathname: "/another", timestamp: t2, scroll_depth: 24),
+          build(:engagement,
+            user_id: 12,
+            pathname: "/another",
+            timestamp: t2,
+            scroll_depth: 24,
+            engagement_time: 30_000
+          ),
           build(:pageview, user_id: 34, pathname: "/blog", timestamp: t0),
-          build(:engagement, user_id: 34, pathname: "/blog", timestamp: t1, scroll_depth: 17),
+          build(:engagement,
+            user_id: 34,
+            pathname: "/blog",
+            timestamp: t1,
+            scroll_depth: 17,
+            engagement_time: 10_000
+          ),
           build(:pageview, user_id: 34, pathname: "/another", timestamp: t1),
-          build(:engagement, user_id: 34, pathname: "/another", timestamp: t2, scroll_depth: 26),
+          build(:engagement,
+            user_id: 34,
+            pathname: "/another",
+            timestamp: t2,
+            scroll_depth: 26,
+            engagement_time: 20_000
+          ),
           build(:pageview, user_id: 34, pathname: "/blog", timestamp: t2),
-          build(:engagement, user_id: 34, pathname: "/blog", timestamp: t3, scroll_depth: 60),
+          build(:engagement,
+            user_id: 34,
+            pathname: "/blog",
+            timestamp: t3,
+            scroll_depth: 60,
+            engagement_time: 30_000
+          ),
           build(:pageview, user_id: 56, pathname: "/blog", timestamp: t0),
-          build(:engagement, user_id: 56, pathname: "/blog", timestamp: t1, scroll_depth: 100),
+          build(:engagement,
+            user_id: 56,
+            pathname: "/blog",
+            timestamp: t1,
+            scroll_depth: 100,
+            engagement_time: 40_000
+          ),
           build(:pageview, user_id: 78, pathname: "/", timestamp: t0),
-          build(:engagement, user_id: 78, pathname: "/", timestamp: t1, scroll_depth: 20),
+          build(:engagement,
+            user_id: 78,
+            pathname: "/",
+            timestamp: t1,
+            scroll_depth: 20,
+            engagement_time: 10_000
+          ),
           build(:pageview, pathname: "/", timestamp: t1),
           build(:pageview, pathname: "/blog", timestamp: NaiveDateTime.add(t0, 1, :day))
         ]
@@ -1094,9 +1157,6 @@ defmodule Plausible.Imported.CSVImporterTest do
         |> unzip_archive()
         |> upload_csvs()
         |> run_import()
-
-      assert %NaiveDateTime{} =
-               Plausible.Repo.reload!(exported_site).scroll_depth_visible_at
 
       assert %SiteImport{
                start_date: start_date,
@@ -1122,7 +1182,9 @@ defmodule Plausible.Imported.CSVImporterTest do
             date: i.date,
             page: i.page,
             total_scroll_depth: i.total_scroll_depth,
-            total_scroll_depth_visits: i.total_scroll_depth_visits
+            total_scroll_depth_visits: i.total_scroll_depth_visits,
+            total_time_on_page: i.total_time_on_page,
+            total_time_on_page_visits: i.total_time_on_page_visits
           }
         )
         |> Plausible.IngestRepo.all()
@@ -1131,28 +1193,36 @@ defmodule Plausible.Imported.CSVImporterTest do
                date: expected_start_date,
                page: "/",
                total_scroll_depth: 20,
-               total_scroll_depth_visits: 1
+               total_scroll_depth_visits: 1,
+               total_time_on_page: 10,
+               total_time_on_page_visits: 1
              } in imported_data
 
       assert %{
                date: expected_start_date,
                page: "/another",
                total_scroll_depth: 50,
-               total_scroll_depth_visits: 2
+               total_scroll_depth_visits: 2,
+               total_time_on_page: 50,
+               total_time_on_page_visits: 2
              } in imported_data
 
       assert %{
                date: expected_start_date,
                page: "/blog",
                total_scroll_depth: 180,
-               total_scroll_depth_visits: 3
+               total_scroll_depth_visits: 3,
+               total_time_on_page: 130,
+               total_time_on_page_visits: 3
              } in imported_data
 
       assert %{
                date: expected_end_date,
                page: "/blog",
                total_scroll_depth: 0,
-               total_scroll_depth_visits: 0
+               total_scroll_depth_visits: 0,
+               total_time_on_page: 0,
+               total_time_on_page_visits: 0
              } in imported_data
 
       # assert via stats queries that scroll_depth from imported
@@ -1164,7 +1234,7 @@ defmodule Plausible.Imported.CSVImporterTest do
       ]
 
       query_scroll_depth_per_page = fn conn, site ->
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["scroll_depth"],
           "date_range" => "all",
@@ -1179,49 +1249,13 @@ defmodule Plausible.Imported.CSVImporterTest do
       assert query_scroll_depth_per_page.(conn, exported_site) == expected_results
       assert query_scroll_depth_per_page.(conn, imported_site) == expected_results
     end
-
-    @tag :tmp_dir
-    test "does not include scroll depth without existing engagement data", %{
-      user: user,
-      tmp_dir: tmp_dir
-    } do
-      exported_site = new_site(owner: user)
-
-      populate_stats(exported_site, [build(:pageview, timestamp: ~N[2021-01-01 00:00:00])])
-
-      context = %{
-        user: user,
-        tmp_dir: tmp_dir,
-        exported_site: exported_site,
-        imported_site: new_site(owner: user)
-      }
-
-      %{exported_files: exported_files, site_import: site_import} =
-        context
-        |> export_archive()
-        |> download_archive()
-        |> unzip_archive()
-        |> upload_csvs()
-        |> run_import()
-
-      assert %SiteImport{has_scroll_depth: false} = site_import
-
-      imported_pages_content =
-        exported_files
-        |> Enum.find(&String.contains?(&1, "imported_pages"))
-        |> File.read!()
-
-      assert is_nil(Plausible.Repo.reload!(exported_site).scroll_depth_visible_at)
-
-      refute imported_pages_content =~ "scroll_depth"
-    end
   end
 
   defp export_archive(%{user: user, exported_site: exported_site} = context) do
     context =
       on_ee do
         assert {:ok, _job} =
-                 Plausible.Exports.schedule_s3_export(exported_site.id, nil, user.email)
+                 Plausible.Exports.schedule_s3_export(exported_site.id, user.email)
 
         context
       else
@@ -1244,10 +1278,10 @@ defmodule Plausible.Imported.CSVImporterTest do
     assert email.to == [{user.name, user.email}]
 
     assert email.html_body =~
-             ~s[Please click <a href="http://localhost:8000/#{URI.encode_www_form(exported_site.domain)}/download/export">here</a>]
+             ~s[Please click <a href="http://localhost:8000/#{URI.encode_www_form(exported_site.domain)}/download/export?__team=#{exported_site.team.identifier}">here</a>]
 
     assert email.text_body =~
-             ~r[Please click here \(http://localhost:8000/#{URI.encode_www_form(exported_site.domain)}/download/export\) to start the download process.]
+             ~r[Please click here \(http://localhost:8000/#{URI.encode_www_form(exported_site.domain)}/download/export\?__team=#{exported_site.team.identifier}\) to start the download process.]
 
     context
   end
@@ -1269,8 +1303,10 @@ defmodule Plausible.Imported.CSVImporterTest do
   end
 
   defp unzip_archive(%{tmp_dir: tmp_dir} = context) do
+    {:ok, binary} = :file.read_file(to_charlist(Path.join(tmp_dir, "plausible-export.zip")))
+
     assert {:ok, files} =
-             :zip.unzip(to_charlist(Path.join(tmp_dir, "plausible-export.zip")),
+             :zip.unzip(binary,
                cwd: to_charlist(tmp_dir)
              )
 

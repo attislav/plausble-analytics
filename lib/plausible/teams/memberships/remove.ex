@@ -14,7 +14,16 @@ defmodule Plausible.Teams.Memberships.Remove do
          :ok <- check_can_remove_membership(current_user_role, team_membership.role),
          :ok <- check_owner_can_get_removed(team, team_membership.role) do
       team_membership = Repo.preload(team_membership, [:team, :user])
-      Repo.delete!(team_membership)
+
+      {:ok, _} =
+        Repo.transaction(fn ->
+          delete_membership!(team_membership)
+
+          Plausible.Segments.after_user_removed_from_team(
+            team_membership.team,
+            team_membership.user
+          )
+        end)
 
       if Keyword.get(opts, :send_email?, true) do
         send_team_member_removed_email(team_membership)
@@ -22,6 +31,18 @@ defmodule Plausible.Teams.Memberships.Remove do
 
       {:ok, team_membership}
     end
+  end
+
+  defp delete_membership!(team_membership) do
+    user = team_membership.user
+
+    Repo.delete!(team_membership)
+
+    if Plausible.Users.type(user) == :sso do
+      {:ok, :deleted} = Plausible.Auth.delete_user(user)
+    end
+
+    :ok
   end
 
   defp check_can_remove_membership(:owner, _), do: :ok

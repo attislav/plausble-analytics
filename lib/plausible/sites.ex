@@ -2,23 +2,88 @@ defmodule Plausible.Sites do
   @moduledoc """
   Sites context functions.
   """
+  use Plausible
 
   import Ecto.Query
 
-  alias Plausible.Auth
-  alias Plausible.Repo
-  alias Plausible.Site
-  alias Plausible.Teams
+  alias Plausible.{Auth, Repo, Site, Teams, Billing}
+  alias Plausible.Billing.Feature.SharedLinks
   alias Plausible.Site.SharedLink
 
   require Plausible.Site.UserPreference
 
-  def get_by_domain(domain) do
-    Repo.get_by(Site, domain: domain)
+  on_ee do
+    @spec regular?(Site.t()) :: boolean()
+    def regular?(%Site{} = site), do: not site.consolidated
+
+    @spec consolidated?(Site.t()) :: boolean()
+    def consolidated?(%Site{} = site), do: site.consolidated
+
+    def site_id_query_filter(%Site{} = site) do
+      if consolidated?(site) do
+        site_ids = Plausible.ConsolidatedView.Cache.get(site.domain)
+        dynamic([x], fragment("? in ?", x.site_id, ^site_ids))
+      else
+        dynamic([x], x.site_id == ^site.id)
+      end
+    end
+  else
+    @spec regular?(Site.t()) :: boolean()
+    def regular?(%Site{}), do: always(true)
+
+    @spec consolidated?(Site.t()) :: boolean()
+    def consolidated?(%Site{}), do: always(false)
+
+    def site_id_query_filter(%Site{} = site) do
+      dynamic([x], x.site_id == ^site.id)
+    end
   end
 
-  def get_by_domain!(domain) do
-    Repo.get_by!(Site, domain: domain)
+  def display_name(%Site{} = site, opts \\ []) do
+    if consolidated?(site) do
+      "#{if opts[:capitalize_consolidated], do: "C", else: "c"}onsolidated view"
+    else
+      site.domain
+    end
+  end
+
+  @shared_link_special_names ["WordPress - Shared Dashboard"]
+  @doc """
+  Special shared link names are used to distinguish between those
+  created by the Plugins API, and those created in any other way
+  (i.e. via Sites API or in the Dashboard Site Settings UI).
+
+  The intent is to give our WP plugin the ability to display an
+  embedded dashboard even when the user's subscription does not
+  support the shared links feature.
+
+  A shared link with a special name can only be created via the
+  plugins API, and it will not show up under the list of shared
+  links in Site Settings > Visibility.
+
+  Once created with the special name, the link will be accessible
+  even when the team does not have access to SharedLinks feature.
+  """
+  def shared_link_special_names(), do: @shared_link_special_names
+
+  def get_by_domain(domain, opts \\ []) do
+    include_consolidated? = Keyword.get(opts, :include_consolidated?, false)
+
+    if include_consolidated? do
+      Repo.get_by(Site, domain: domain)
+    else
+      Repo.get_by(Site.regular(), domain: domain)
+    end
+  end
+
+  def get_by_domain!(domain, opts \\ []) do
+    include_consolidated? = Keyword.get(opts, :include_consolidated?, false)
+
+    if include_consolidated? do
+      Repo.get_by!(Site, domain: domain)
+    else
+      Repo.get_by!(Site.regular(), domain: domain)
+    end
   end
 
   @spec toggle_pin(Auth.User.t(), Site.t()) ::
@@ -81,7 +146,7 @@ defmodule Plausible.Sites do
 
   @spec set_option(Auth.User.t(), Site.t(), atom(), any()) :: Site.UserPreference.t()
   def set_option(user, site, option, value) when option in Site.UserPreference.options() do
-    Plausible.Sites.get_for_user!(user, site.domain)
+    get_for_user!(user, site.domain)
 
     user
     |> Site.UserPreference.changeset(site, %{option => value})
@@ -121,17 +186,7 @@ defmodule Plausible.Sites do
         where: gm.site_id == ^site.id,
         select: %{
           user: u,
-          role:
-            fragment(
-              """
-              CASE
-              WHEN ? = 'editor' THEN 'admin'
-              ELSE ?
-              END
-              """,
-              gm.role,
-              gm.role
-            )
+          role: gm.role
         }
       )
       |> Repo.all()
@@ -146,17 +201,7 @@ defmodule Plausible.Sites do
         select: %{
           invitation_id: gi.invitation_id,
           email: ti.email,
-          role:
-            fragment(
-              """
-              CASE
-              WHEN ? = 'editor' THEN 'admin'
-              ELSE ?
-              END
-              """,
-              gi.role,
-              gi.role
-            )
+          role: gi.role
         }
       )
       |> Repo.all()
@@ -176,10 +221,71 @@ defmodule Plausible.Sites do
     %{memberships: memberships, invitations: site_transfers ++ invitations}
   end
 
+  @spec list_guests_query(Site.t(), Keyword.t()) :: Ecto.Query.t()
+  def list_guests_query(site, opts \\ []) do
+    guest_memberships =
+      from(
+        gm in Teams.GuestMembership,
+        inner_join: tm in assoc(gm, :team_membership),
+        inner_join: u in assoc(tm, :user),
+        as: :user,
+        where: gm.site_id == ^site.id,
+        select: %{
+          id: gm.id,
+          inserted_at: gm.inserted_at,
+          email: u.email,
+          role: gm.role,
+          status: "accepted"
+        }
+      )
+
+    guest_memberships =
+      if email = opts[:email] do
+        guest_memberships |> where([user: u], u.email == ^email)
+      else
+        guest_memberships
+      end
+
+    guest_invitations =
+      from(
+        gi in Teams.GuestInvitation,
+        inner_join: ti in assoc(gi, :team_invitation),
+        as: :team_invitation,
+        where: gi.site_id == ^site.id,
+        select: %{
+          id: gi.id,
+          inserted_at: gi.inserted_at,
+          email: ti.email,
+          role: gi.role,
+          status: "invited"
+        }
+      )
+
+    guest_invitations =
+      if email = opts[:email] do
+        guest_invitations |> where([team_invitation: ti], ti.email == ^email)
+      else
+        guest_invitations
+      end
+
+    guests = union_all(guest_memberships, ^guest_invitations)
+
+    from(g in subquery(guests),
+      select: %{
+        id: g.id,
+        inserted_at: g.inserted_at,
+        email: g.email,
+        role: g.role,
+        status: g.status
+      },
+      order_by: [desc: g.inserted_at, desc: g.id]
+    )
+  end
+
   @spec for_user_query(Auth.User.t(), Teams.Team.t() | nil) :: Ecto.Query.t()
   def for_user_query(user, team \\ nil) do
     query =
-      from(s in Site,
+      from(s in Site.regular(),
         as: :site,
         inner_join: t in assoc(s, :team),
         as: :team,
@@ -195,7 +301,7 @@ defmodule Plausible.Sites do
       where(
         query,
         [team_memberships: tm, guest_memberships: gm, site: s],
-        (tm.role != :guest and tm.team_id == ^team.id) or gm.site_id == s.id
+        tm.role != :guest and tm.team_id == ^team.id
       )
     else
       where(
@@ -231,7 +337,7 @@ defmodule Plausible.Sites do
     end)
     |> Ecto.Multi.run(:clear_changed_from, fn
       _repo, %{site_changeset: %{changes: %{domain: domain}}} ->
-        case Plausible.Sites.get_for_user(user, domain, [:owner]) do
+        case get_for_user(user, domain, roles: [:owner]) do
           %Site{domain_changed_from: ^domain} = site ->
             site
             |> Ecto.Changeset.change()
@@ -257,6 +363,16 @@ defmodule Plausible.Sites do
         {:ok, :trial_already_started}
       end
     end)
+    |> Ecto.Multi.run(:updated_lock, fn _repo, %{create_team: team} ->
+      lock_state =
+        if ee?() do
+          Billing.SiteLocker.update_for(team, send_email?: false)
+        else
+          :unlocked
+        end
+
+      {:ok, lock_state}
+    end)
     |> Repo.transaction()
   end
 
@@ -277,6 +393,18 @@ defmodule Plausible.Sites do
   it in the sites table.
   """
   def stats_start_date(site)
+
+  on_ee do
+    # for now, we're going to always update consolidated views
+    def stats_start_date(%Site{consolidated: true} = site) do
+      team = Repo.preload(site, :team).team
+
+      site
+      |> Plausible.ConsolidatedView.change_stats_dates(team)
+      |> Repo.update!()
+      |> Map.fetch!(:stats_start_date)
+    end
+  end
 
   def stats_start_date(%Site{stats_start_date: %Date{} = date}) do
     date
@@ -310,17 +438,21 @@ defmodule Plausible.Sites do
     !!stats_start_date(site)
   end
 
-  def create_shared_link(site, name, password \\ nil) do
-    changes =
-      SharedLink.changeset(
-        %SharedLink{
-          site_id: site.id,
-          slug: Nanoid.generate()
-        },
-        %{name: name, password: password}
-      )
+  def create_shared_link(site, name, opts \\ []) do
+    password = Keyword.get(opts, :password)
+    site = Plausible.Repo.preload(site, :team)
+    skip_feature_check? = Keyword.get(opts, :skip_feature_check?, false)
 
-    Repo.insert(changes)
+    if not skip_feature_check? and SharedLinks.check_availability(site.team) != :ok do
+      {:error, :upgrade_required}
+    else
+      %SharedLink{site_id: site.id, slug: Nanoid.generate()}
+      |> SharedLink.changeset(
+        %{name: name, password: password},
+        Keyword.take(opts, [:skip_special_name_check?])
+      )
+      |> Repo.insert()
+    end
   end
 
   def shared_link_url(site, link) do
@@ -329,19 +461,11 @@ defmodule Plausible.Sites do
     base <> domain <> "?auth=" <> link.slug
   end
 
-  def update_installation_meta!(site, meta) do
+  def update_legacy_time_on_page_cutoff!(site, cutoff) do
     site
     |> Ecto.Changeset.change()
-    |> Ecto.Changeset.put_change(:installation_meta, meta)
+    |> Ecto.Changeset.put_change(:legacy_time_on_page_cutoff, cutoff)
     |> Repo.update!()
-  end
-
-  def set_scroll_depth_visible_at(site) do
-    utc_now = NaiveDateTime.utc_now(:second)
-
-    site
-    |> Ecto.Changeset.change(%{scroll_depth_visible_at: utc_now})
-    |> Repo.update()
   end
 
   def has_goals?(site) do
@@ -352,45 +476,64 @@ defmodule Plausible.Sites do
     )
   end
 
-  def locked?(%Site{locked: locked}) do
-    locked
-  end
+  def get_for_user!(user, domain, opts \\ []) do
+    opts = default_get_for_user_opts(opts)
+    roles = Keyword.fetch!(opts, :roles)
+    include_consolidated? = Keyword.fetch!(opts, :include_consolidated?)
 
-  def get_for_user!(user, domain, roles \\ [:owner, :admin, :editor, :viewer]) do
     site =
       if :super_admin in roles and Plausible.Auth.is_super_admin?(user.id) do
-        get_by_domain!(domain)
+        get_by_domain!(domain, include_consolidated?: include_consolidated?)
       else
         user.id
-        |> get_for_user_query(domain, List.delete(roles, :super_admin))
+        |> get_for_user_query(domain, List.delete(roles, :super_admin), opts)
         |> Repo.one!()
       end
 
     Repo.preload(site, :team)
   end
 
-  def get_for_user(user, domain, roles \\ [:owner, :admin, :editor, :viewer]) do
+  def get_for_user(user, domain, opts \\ []) do
+    opts = default_get_for_user_opts(opts)
+    roles = Keyword.fetch!(opts, :roles)
+    include_consolidated? = Keyword.fetch!(opts, :include_consolidated?)
+
     if :super_admin in roles and Plausible.Auth.is_super_admin?(user.id) do
-      get_by_domain(domain)
+      get_by_domain(domain, include_consolidated?: include_consolidated?)
     else
       user.id
-      |> get_for_user_query(domain, List.delete(roles, :super_admin))
+      |> get_for_user_query(domain, List.delete(roles, :super_admin), opts)
       |> Repo.one()
     end
   end
 
-  defp get_for_user_query(user_id, domain, roles) do
+  defp get_for_user_query(user_id, domain, roles, opts) do
+    include_consolidated? = Keyword.fetch!(opts, :include_consolidated?)
     roles = Enum.map(roles, &to_string/1)
 
-    from(s in Plausible.Site,
-      join: t in assoc(s, :team),
-      join: tm in assoc(t, :team_memberships),
-      left_join: gm in assoc(tm, :guest_memberships),
-      where: tm.user_id == ^user_id,
-      where: coalesce(gm.role, tm.role) in ^roles,
-      where: s.domain == ^domain or s.domain_changed_from == ^domain,
-      where: is_nil(gm.id) or gm.site_id == s.id,
-      select: s
+    q =
+      from(s in Site,
+        join: t in assoc(s, :team),
+        join: tm in assoc(t, :team_memberships),
+        left_join: gm in assoc(tm, :guest_memberships),
+        where: tm.user_id == ^user_id,
+        where: coalesce(gm.role, tm.role) in ^roles,
+        where: s.domain == ^domain or s.domain_changed_from == ^domain,
+        where: is_nil(gm.id) or gm.site_id == s.id,
+        select: s
+      )
+
+    if include_consolidated? do
+      q
+    else
+      from(s in Site.regular(q))
+    end
+  end
+
+  defp default_get_for_user_opts(opts) do
+    Keyword.merge(
+      [include_consolidated?: false, roles: [:owner, :admin, :editor, :viewer]],
+      opts
     )
   end
 end

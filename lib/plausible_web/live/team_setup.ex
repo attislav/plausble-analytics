@@ -10,37 +10,42 @@ defmodule PlausibleWeb.Live.TeamSetup do
   alias Plausible.Teams.Management.Layout
   alias PlausibleWeb.Router.Helpers, as: Routes
 
-  def mount(params, _session, socket) do
-    my_team = socket.assigns.my_team
-    enabled? = Teams.enabled?(my_team)
+  def mount(_params, _session, socket) do
+    current_user = socket.assigns.current_user
+    current_team = socket.assigns.current_team
 
-    # XXX: remove dev param, once manual testing is considered done
     socket =
-      case {enabled?, my_team, params["dev"]} do
-        {true, %Teams.Team{setup_complete: true}, nil} ->
+      case current_team do
+        %Teams.Team{setup_complete: true} ->
           socket
-          |> put_flash(:success, "Your team is now setup")
+          |> put_flash(:success, "Your team is now created")
           |> redirect(to: Routes.settings_path(socket, :team_general))
 
-        {true, %Teams.Team{}, _} ->
-          team_name_changeset = Teams.Team.name_changeset(my_team)
+        %Teams.Team{} ->
+          team_name_form =
+            current_team
+            |> Teams.Team.name_changeset(%{name: "#{current_user.name}'s Team"})
+            |> Repo.update!()
+            |> Teams.Team.name_changeset(%{})
+            |> to_form()
 
-          layout = Layout.init(my_team)
+          layout = Layout.init(current_team)
 
           assign(socket,
-            team_name_changeset: team_name_changeset,
-            team_layout: layout
+            team_name_form: team_name_form,
+            team_layout: layout,
+            current_team: current_team
           )
 
-        {false, _, _} ->
+        _ ->
           socket
-          |> put_flash(:error, "You cannot set up any team just yet")
+          |> put_flash(:error, "You cannot create any team just yet")
           |> redirect(to: Routes.site_path(socket, :index))
       end
 
     socket =
-      if my_team do
-        {:ok, my_role} = Teams.Memberships.team_role(my_team, socket.assigns.current_user)
+      if current_team do
+        {:ok, my_role} = Teams.Memberships.team_role(current_team, current_user)
         assign(socket, my_role: my_role)
       else
         socket
@@ -50,53 +55,78 @@ defmodule PlausibleWeb.Live.TeamSetup do
   end
 
   def render(assigns) do
+    assigns = assign(assigns, :locked?, Plausible.Teams.Billing.solo?(assigns.current_team))
+
     ~H"""
-    <.focus_box>
-      <:title>Create a new team</:title>
+    <.focus_box padding?={false}>
+      <:title>
+        <div class="pt-8 px-8 flex justify-between">
+          <div>Create a new team</div>
+          <div class="ml-auto">
+            <.docs_info slug="users-roles" />
+          </div>
+        </div>
+      </:title>
       <:subtitle>
-        Add members and assign roles to manage different sites access efficiently
+        <p class="px-8">
+          Name your team, add team members and assign roles. When ready, click "Create Team" to send invitations
+        </p>
       </:subtitle>
 
-      <.form
-        :let={f}
-        for={@team_name_changeset}
-        method="post"
-        phx-change="update-team"
-        id="update-team-form"
-        class="mt-4 mb-8"
-      >
-        <.input type="text" field={f[:name]} label="Name" width="w-full" phx-debounce="500" />
-      </.form>
+      <div class="relative -mt-8 pt-4 pb-8 px-8">
+        <PlausibleWeb.Components.Billing.feature_gate
+          current_role={@current_team_role}
+          current_team={@current_team}
+          locked?={@locked?}
+        >
+          <.form
+            :let={f}
+            for={@team_name_form}
+            method="post"
+            phx-change="update-team"
+            phx-blur="update-team"
+            id="update-team-form"
+            class="mt-4 mb-8"
+          >
+            <.input
+              type="text"
+              placeholder={"#{@current_user.name}'s Team"}
+              autofocus={not @locked?}
+              field={f[:name]}
+              label="Name"
+              width="w-full"
+              phx-debounce="500"
+            />
+          </.form>
 
-      <.label class="mb-2">
-        Team Members
-      </.label>
-      {live_render(@socket, PlausibleWeb.Live.TeamManagement,
-        id: "team-management-setup",
-        container: {:div, id: "team-setup"},
-        session: %{
-          "mode" => "team-setup"
-        }
-      )}
+          <.label class="mb-2">
+            Team members
+          </.label>
+          {live_render(@socket, PlausibleWeb.Live.TeamManagement,
+            id: "team-management-setup",
+            container: {:div, id: "team-setup"},
+            session: %{
+              "mode" => "team-setup"
+            }
+          )}
+        </PlausibleWeb.Components.Billing.feature_gate>
+      </div>
     </.focus_box>
     """
   end
 
-  def handle_event("update-team", %{"team" => params}, socket) do
-    team_name_changeset =
-      socket.assigns.my_team
-      |> Teams.Team.name_changeset(params)
+  def handle_event("update-team", %{"team" => %{"name" => name}}, socket) do
+    changeset = Teams.Team.name_changeset(socket.assigns.current_team, %{name: name})
 
-    if team_name_changeset.valid? do
-      my_team = Repo.update!(team_name_changeset)
+    socket =
+      case Repo.update(changeset) do
+        {:ok, team} ->
+          assign(socket, team_name_form: to_form(changeset), current_team: team)
 
-      {:noreply,
-       assign(socket,
-         team_name_changeset: team_name_changeset,
-         my_team: my_team
-       )}
-    else
-      {:noreply, socket}
-    end
+        {:error, changeset} ->
+          assign(socket, team_name_form: to_form(changeset))
+      end
+
+    {:noreply, socket}
   end
 end

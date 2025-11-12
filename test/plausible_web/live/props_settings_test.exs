@@ -8,16 +8,37 @@ defmodule PlausibleWeb.Live.PropsSettingsTest do
     setup [:create_user, :log_in, :create_site]
 
     @tag :ee_only
-    test "premium feature notice renders", %{conn: conn, site: site, user: user} do
-      user
-      |> team_of()
-      |> Plausible.Teams.Team.end_trial()
-      |> Plausible.Repo.update!()
+    test "renders with locked content when subscription is insufficient", %{
+      conn: conn,
+      site: site,
+      user: user
+    } do
+      subscribe_to_growth_plan(user)
 
-      conn = get(conn, "/#{site.domain}/settings/properties")
-      resp = conn |> html_response(200) |> text()
+      lock_notice =
+        conn
+        |> get("/#{site.domain}/settings/properties")
+        |> html_response(200)
+        |> text_of_element("#lock-notice")
 
-      assert resp =~ "please upgrade your subscription"
+      assert lock_notice =~ "please upgrade your subscription"
+    end
+
+    @tag :ee_only
+    test "does not lock content when subscription is sufficient", %{
+      conn: conn,
+      site: site,
+      user: user
+    } do
+      subscribe_to_business_plan(user)
+
+      lock_notice =
+        conn
+        |> get("/#{site.domain}/settings/properties")
+        |> html_response(200)
+        |> text_of_element("#lock-notice")
+
+      refute lock_notice =~ "please upgrade your subscription"
     end
 
     test "lists props for the site and renders links", %{conn: conn, site: site} do
@@ -25,7 +46,7 @@ defmodule PlausibleWeb.Live.PropsSettingsTest do
       conn = get(conn, "/#{site.domain}/settings/properties")
 
       resp = html_response(conn, 200)
-      assert resp =~ "Attach Custom Properties"
+      assert resp =~ "Attach custom properties"
 
       assert element_exists?(
                resp,
@@ -78,6 +99,62 @@ defmodule PlausibleWeb.Live.PropsSettingsTest do
       resp = html_response(conn, 200)
       assert element_exists?(resp, ~s/input[type="text"]#filter-text/)
       assert element_exists?(resp, ~s/form[phx-change="filter"]#filter-form/)
+    end
+  end
+
+  on_ee do
+    describe "GET /:domain/settings/properties - consolidated views" do
+      setup [:create_user, :create_team, :log_in]
+
+      setup %{team: team} = context do
+        new_site(team: team)
+        new_site(team: team)
+
+        {:ok, Map.put(context, :consolidated_view, new_consolidated_view(team))}
+      end
+
+      test "lists existing props and renders links", %{
+        conn: conn,
+        consolidated_view: consolidated_view
+      } do
+        {:ok, consolidated_view} =
+          Plausible.Props.allow(consolidated_view, ["amount", "logged_in", "is_customer"])
+
+        conn = get(conn, "/#{consolidated_view.domain}/settings/properties")
+
+        resp = html_response(conn, 200)
+        assert resp =~ "Attach custom properties"
+
+        assert element_exists?(
+                 resp,
+                 ~s|a[href="https://plausible.io/docs/custom-props/introduction"]|
+               )
+
+        assert resp =~ "amount"
+        assert resp =~ "logged_in"
+        assert resp =~ "is_customer"
+        refute resp =~ "please upgrade your subscription"
+      end
+
+      test "if no props are allowed, a proper info is displayed", %{
+        conn: conn,
+        consolidated_view: consolidated_view
+      } do
+        conn = get(conn, "/#{consolidated_view.domain}/settings/properties")
+        resp = html_response(conn, 200)
+        assert resp =~ "No properties configured for this site"
+      end
+
+      test "add property button and search input are rendered", %{
+        conn: conn,
+        consolidated_view: consolidated_view
+      } do
+        conn = get(conn, "/#{consolidated_view.domain}/settings/properties")
+        resp = html_response(conn, 200)
+        assert element_exists?(resp, ~s/button[phx-click="add-prop"]/)
+        assert element_exists?(resp, ~s/input[type="text"]#filter-text/)
+        assert element_exists?(resp, ~s/form[phx-change="filter"]#filter-form/)
+      end
     end
   end
 
@@ -161,7 +238,7 @@ defmodule PlausibleWeb.Live.PropsSettingsTest do
       lv = get_liveview(conn, site)
       html = lv |> element(~s/button[phx-click="add-prop"]/) |> render_click()
 
-      assert html =~ "Add Property for #{site.domain}"
+      assert html =~ "Add property for #{site.domain}"
 
       assert element_exists?(
                html,

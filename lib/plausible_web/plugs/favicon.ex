@@ -29,8 +29,9 @@ defmodule PlausibleWeb.Favicon do
   import Plug.Conn
   alias Plausible.HTTPClient
 
-  @placeholder_icon_location "priv/placeholder_favicon.ico"
+  @placeholder_icon_location "priv/link_favicon.svg"
   @placeholder_icon File.read!(@placeholder_icon_location)
+  @external_resource @placeholder_icon_location
   @custom_icons %{
     "Brave" => "search.brave.com",
     "Sogou" => "sogou.com",
@@ -65,8 +66,7 @@ defmodule PlausibleWeb.Favicon do
 
   I'm not sure why DDG sometimes returns a broken PNG image in their response
   but we filter that out.  When the icon request fails, we show a placeholder
-  favicon instead. The placeholder is an emoji from
-  [https://favicon.io/emoji-favicons/](https://favicon.io/emoji-favicons/)
+  favicon instead. The placeholder is an svg from [https://heroicons.com/](https://heroicons.com/).
 
   DuckDuckGo favicon service has some issues with [SVG favicons](https://css-tricks.com/svg-favicons-and-all-the-fun-things-we-can-do-with-them/).
   For some reason, they return them with `content-type=image/x-icon` whereas SVG
@@ -94,9 +94,13 @@ defmodule PlausibleWeb.Favicon do
       "/favicon/sources/placeholder" ->
         send_placeholder(conn)
 
-      "/favicon/sources/" <> source ->
-        clean_source = URI.decode_www_form(source)
-        domain = Map.get(favicon_domains, clean_source, clean_source)
+      "/favicon/sources/" <> domain ->
+        domain = URI.decode_www_form(domain)
+
+        domain =
+          Map.get(favicon_domains, domain, domain)
+          |> String.split("/", parts: 2)
+          |> hd()
 
         case HTTPClient.impl().get("https://icons.duckduckgo.com/ip3/#{domain}.ico") do
           {:ok, %Finch.Response{status: 200, body: body, headers: headers}}
@@ -119,7 +123,7 @@ defmodule PlausibleWeb.Favicon do
 
   defp send_placeholder(conn) do
     conn
-    |> put_resp_content_type("image/x-icon")
+    |> put_resp_content_type("image/svg+xml")
     |> put_resp_header("cache-control", "public, max-age=2592000")
     |> send_resp(200, @placeholder_icon)
     |> halt

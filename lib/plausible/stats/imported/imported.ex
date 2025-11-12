@@ -11,23 +11,15 @@ defmodule Plausible.Stats.Imported do
 
   @property_to_table_mappings Imported.Base.property_to_table_mappings()
 
-  @goals_with_url Plausible.Imported.goals_with_url()
-
-  def goals_with_url(), do: @goals_with_url
-
-  @goals_with_path Plausible.Imported.goals_with_path()
-
-  def goals_with_path(), do: @goals_with_path
-
   @doc """
   Returns a boolean indicating whether the combination of filters and
   breakdown property is possible to query from the imported tables.
 
   Usually, when no filters are used, the imported schema supports the
   query. There is one exception though - breakdown by a custom property.
-  We are currently importing only two custom properties - `url` and `path.
+  We are currently importing only two custom properties - `url` and `path`.
   Both these properties can only be used with their special goal filter
-  (see `@goals_with_url` and `@goals_with_path`).
+  (see Plausible.Goals.SystemGoals).
   """
   def schema_supports_query?(query) do
     length(Imported.Base.decide_tables(query)) > 0
@@ -218,15 +210,15 @@ defmodule Plausible.Stats.Imported do
     {table, db_field}
   end
 
-  def merge_imported(q, _, %Query{include_imported: false}, _), do: q
+  def merge_imported(q, _, %Query{include_imported: false}), do: q
 
-  def merge_imported(q, site, %Query{dimensions: []} = query, metrics) do
+  def merge_imported(q, site, %Query{dimensions: []} = query) do
     q = paginate_optimization(q, query)
 
     imported_q =
       site
       |> Imported.Base.query_imported(query)
-      |> select_imported_metrics(metrics)
+      |> select_imported_metrics(query)
       |> paginate_optimization(query)
 
     from(
@@ -234,10 +226,10 @@ defmodule Plausible.Stats.Imported do
       cross_join: i in subquery(imported_q),
       select: %{}
     )
-    |> select_joined_metrics(metrics)
+    |> select_joined_metrics(query)
   end
 
-  def merge_imported(q, site, %Query{dimensions: ["event:goal"]} = query, metrics) do
+  def merge_imported(q, site, %Query{dimensions: ["event:goal"]} = query) do
     goal_join_data = Plausible.Stats.Goals.goal_join_data(query)
 
     Imported.Base.decide_tables(query)
@@ -253,7 +245,7 @@ defmodule Plausible.Stats.Imported do
               i.name
             )
         })
-        |> select_imported_metrics(metrics)
+        |> select_imported_metrics(query)
         |> group_by([], selected_as(:dim0))
         |> where([], selected_as(:dim0) != 0)
 
@@ -282,14 +274,14 @@ defmodule Plausible.Stats.Imported do
         |> select_merge_as([_i, index], %{
           dim0: fragment("CAST(?, 'UInt64')", index)
         })
-        |> select_imported_metrics(metrics)
+        |> select_imported_metrics(query)
     end)
     |> Enum.reduce(q, fn imports_q, q ->
-      naive_dimension_join(q, imports_q, metrics)
+      naive_dimension_join(q, imports_q, query)
     end)
   end
 
-  def merge_imported(q, site, query, metrics) do
+  def merge_imported(q, site, query) do
     if schema_supports_query?(query) do
       q = paginate_optimization(q, query)
 
@@ -298,7 +290,7 @@ defmodule Plausible.Stats.Imported do
         |> Imported.Base.query_imported(query)
         |> where([i], i.visitors > 0)
         |> group_imported_by(query)
-        |> select_imported_metrics(metrics)
+        |> select_imported_metrics(query)
         |> paginate_optimization(query)
 
       from(s in subquery(q),
@@ -307,7 +299,7 @@ defmodule Plausible.Stats.Imported do
         select: %{}
       )
       |> select_joined_dimensions(query)
-      |> select_joined_metrics(metrics)
+      |> select_joined_metrics(query)
     else
       q
     end
@@ -319,7 +311,7 @@ defmodule Plausible.Stats.Imported do
     |> select_merge([i], %{total_visitors: fragment("sum(?)", i.visitors)})
   end
 
-  defp naive_dimension_join(q1, q2, metrics) do
+  defp naive_dimension_join(q1, q2, query) do
     from(a in subquery(q1),
       full_join: b in subquery(q2),
       on: a.dim0 == b.dim0,
@@ -328,7 +320,7 @@ defmodule Plausible.Stats.Imported do
     |> select_merge_as([a, b], %{
       dim0: fragment("if(? != 0, ?, ?)", a.dim0, a.dim0, b.dim0)
     })
-    |> select_joined_metrics(metrics)
+    |> select_joined_metrics(query)
   end
 
   # Optimization for cases when grouping by a very high cardinality column.
@@ -356,9 +348,18 @@ defmodule Plausible.Stats.Imported do
     end
   end
 
+  @cannot_optimize_metrics [
+    :exit_rate,
+    :scroll_depth,
+    :percentage,
+    :conversion_rate,
+    :group_conversion_rate,
+    :time_on_page
+  ]
+
   defp can_order_by?(query) do
     Enum.all?(query.order_by, fn
-      {:scroll_depth, _} -> false
+      {metric, _direction} when metric in @cannot_optimize_metrics -> false
       {metric, _direction} when is_atom(metric) -> metric in query.metrics
       _ -> true
     end)

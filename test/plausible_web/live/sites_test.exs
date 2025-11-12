@@ -13,7 +13,44 @@ defmodule PlausibleWeb.Live.SitesTest do
     test "renders empty sites page", %{conn: conn} do
       {:ok, _lv, html} = live(conn, "/sites")
 
-      assert text(html) =~ "You don't have any sites yet"
+      text = text(html)
+      assert text =~ "My Personal Sites"
+      assert text =~ "You don't have any sites yet"
+      refute text =~ "You currently have no personal sites"
+      refute text =~ "Go to your team"
+    end
+
+    test "renders team switcher link, if on personal sites with other teams available", %{
+      conn: conn,
+      user: user
+    } do
+      team2 = new_site().team
+
+      add_member(team2, user: user, role: :admin)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+      text = text(html)
+
+      assert text =~ "My Personal Sites"
+      refute text =~ "You don't have any sites yet"
+      assert text =~ "You currently have no personal sites"
+      assert text =~ "Go to your team"
+    end
+
+    test "renders settings link when current team is set", %{user: user, conn: conn} do
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      refute element_exists?(html, ~s|a[data-test-id="team-settings-link"]|)
+
+      new_site(owner: user)
+      team = team_of(user)
+      team = Plausible.Teams.complete_setup(team)
+
+      conn = set_current_team(conn, team)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      assert element_exists?(html, ~s|a[data-test-id="team-settings-link"]|)
     end
 
     test "renders team invitations", %{user: user, conn: conn} do
@@ -31,46 +68,30 @@ defmodule PlausibleWeb.Live.SitesTest do
       {:ok, _lv, html} = live(conn, "/sites")
 
       assert text_of_element(html, "#invitation-#{invitation1.invitation_id}") =~
-               "G.I. Joe has invited you to join the \"My Team\" as viewer member."
+               "G.I. Joe has invited you to join the \"My Personal Sites\" as viewer member."
 
       assert text_of_element(html, "#invitation-#{invitation2.invitation_id}") =~
-               "G.I. Jane has invited you to join the \"My Team\" as editor member."
+               "G.I. Jane has invited you to join the \"My Personal Sites\" as editor member."
 
-      assert find(
+      assert element_exists?(
                html,
-               "#invitation-#{invitation1.invitation_id} a[href=#{Routes.invitation_path(PlausibleWeb.Endpoint, :accept_invitation, invitation1.invitation_id)}]"
+               ~s|#invitation-#{invitation1.invitation_id} a[href="#{Routes.invitation_path(PlausibleWeb.Endpoint, :accept_invitation, invitation1.invitation_id)}"]|
              )
 
-      assert find(
+      assert element_exists?(
                html,
-               "#invitation-#{invitation1.invitation_id} a[href=#{Routes.invitation_path(PlausibleWeb.Endpoint, :reject_invitation, invitation1.invitation_id)}]"
+               ~s|#invitation-#{invitation1.invitation_id} a[href="#{Routes.invitation_path(PlausibleWeb.Endpoint, :reject_invitation, invitation1.invitation_id)}"]|
              )
 
-      assert find(
+      assert element_exists?(
                html,
-               "#invitation-#{invitation2.invitation_id} a[href=#{Routes.invitation_path(PlausibleWeb.Endpoint, :accept_invitation, invitation2.invitation_id)}]"
+               ~s|#invitation-#{invitation2.invitation_id} a[href="#{Routes.invitation_path(PlausibleWeb.Endpoint, :accept_invitation, invitation2.invitation_id)}"]|
              )
 
-      assert find(
+      assert element_exists?(
                html,
-               "#invitation-#{invitation2.invitation_id} a[href=#{Routes.invitation_path(PlausibleWeb.Endpoint, :reject_invitation, invitation2.invitation_id)}]"
+               ~s|#invitation-#{invitation2.invitation_id} a[href="#{Routes.invitation_path(PlausibleWeb.Endpoint, :reject_invitation, invitation2.invitation_id)}"]|
              )
-    end
-
-    test "renders metadata for invitation", %{
-      conn: conn,
-      user: user
-    } do
-      inviter = new_user()
-      site = new_site(owner: inviter)
-
-      invitation = invite_guest(site, user, inviter: inviter, role: :viewer)
-
-      {:ok, _lv, html} = live(conn, "/sites")
-
-      invitation_data = get_invitation_data(html)
-
-      assert get_in(invitation_data, ["invitations", invitation.invitation_id, "invitation"])
     end
 
     @tag :ee_only
@@ -85,9 +106,87 @@ defmodule PlausibleWeb.Live.SitesTest do
 
       {:ok, _lv, html} = live(conn, "/sites")
 
-      invitation_data = get_invitation_data(html)
+      template = find_portal_template(html, "#invitation-modal-#{transfer.transfer_id}")
 
-      assert get_in(invitation_data, ["invitations", transfer.transfer_id, "no_plan"])
+      assert text(template) =~
+               "You are unable to accept the ownership of this site because your account does not have a subscription"
+    end
+
+    @tag :ee_only
+    test "renders upgrade nag when current team has a site and trial expired", %{
+      conn: conn,
+      user: user
+    } do
+      team = new_site(owner: user).team
+
+      team
+      |> Ecto.Changeset.change(trial_expiry_date: Date.add(Date.utc_today(), -1))
+      |> Repo.update!()
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      assert html =~ "Payment required"
+    end
+
+    @tag :ee_only
+    test "renders upgrade nag when there's a pending transfer", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, personal_team} = Plausible.Teams.get_or_create(user)
+
+      another_user = new_user()
+      site = new_site(owner: another_user)
+
+      personal_team
+      |> Ecto.Changeset.change(trial_expiry_date: Date.add(Date.utc_today(), -1))
+      |> Repo.update!()
+
+      invite_transfer(site, user, inviter: another_user)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      assert html =~ "Payment required"
+    end
+
+    @tag :ee_only
+    test "does not render upgrade nag when there's no current team", %{conn: conn, user: user} do
+      team = new_site().team |> Plausible.Teams.complete_setup()
+      add_member(team, user: user, role: :owner)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      refute html =~ "Payment required"
+    end
+
+    @tag :ee_only
+    test "does not render upgrade nag when current team has no sites and user has no pending transfers",
+         %{conn: conn, user: user} do
+      {:ok, _personal_team} = Plausible.Teams.get_or_create(user)
+
+      team = new_site().team |> Plausible.Teams.complete_setup()
+      add_member(team, user: user, role: :owner)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      refute html =~ "Payment required"
+    end
+
+    @tag :ee_only
+    test "does not render upgrade nag if current team does not have any sites yet and user has no pending transfers",
+         %{conn: conn, user: user} do
+      {:ok, personal_team} = Plausible.Teams.get_or_create(user)
+
+      personal_team
+      |> Ecto.Changeset.change(trial_expiry_date: Date.add(Date.utc_today(), -1))
+      |> Repo.update!()
+
+      team = new_site().team |> Plausible.Teams.complete_setup()
+      add_member(team, user: user, role: :owner)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      refute html =~ "Payment required"
     end
 
     @tag :ee_only
@@ -106,10 +205,9 @@ defmodule PlausibleWeb.Live.SitesTest do
 
       {:ok, _lv, html} = live(conn, "/sites")
 
-      invitation_data = get_invitation_data(html)
+      template = find_portal_template(html, "#invitation-modal-#{transfer.transfer_id}")
 
-      assert get_in(invitation_data, ["invitations", transfer.transfer_id, "exceeded_limits"]) ==
-               "site limit"
+      assert text(template) =~ "Owning this site would exceed your site limit"
     end
 
     @tag :ee_only
@@ -126,10 +224,10 @@ defmodule PlausibleWeb.Live.SitesTest do
 
       {:ok, _lv, html} = live(conn, "/sites")
 
-      invitation_data = get_invitation_data(html)
+      template = find_portal_template(html, "#invitation-modal-#{transfer.transfer_id}")
 
-      assert get_in(invitation_data, ["invitations", transfer.transfer_id, "missing_features"]) ==
-               "Custom Properties"
+      assert text(template) =~
+               "The site uses Custom Properties, which your current subscription does not support"
     end
 
     test "renders 24h visitors correctly", %{conn: conn, user: user} do
@@ -151,7 +249,7 @@ defmodule PlausibleWeb.Live.SitesTest do
 
       {:ok, lv, _html} = live(conn, "/sites")
 
-      type_into_input(lv, "filter_text", "firs")
+      type_into_input(lv, "filter-text", "firs")
       html = render(lv)
 
       assert html =~ "first.example.com"
@@ -172,7 +270,7 @@ defmodule PlausibleWeb.Live.SitesTest do
       assert html =~ "page=2"
       refute html =~ "page=1"
 
-      type_into_input(lv, "filter_text", "anot")
+      type_into_input(lv, "filter-text", "anot")
       html = render(lv)
 
       assert html =~ "first.another.example.com"
@@ -180,6 +278,83 @@ defmodule PlausibleWeb.Live.SitesTest do
       assert html =~ "third.another.example.com"
       refute html =~ "page=1"
       refute html =~ "page=2"
+    end
+  end
+
+  on_ee do
+    describe "consolidated views appearance" do
+      setup %{user: user} do
+        # this is temporary, instead of feature flag we'll only show consolidated views to super admins
+        patch_env(:super_admin_user_ids, [user.id])
+      end
+
+      test "consolidated view shows up", %{conn: conn, user: user} do
+        new_site(owner: user)
+        team = team_of(user)
+
+        conn = set_current_team(conn, team)
+
+        {:ok, _lv, html} = live(conn, "/sites")
+
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
+
+        new_consolidated_view(team)
+
+        {:ok, _lv, html} = live(conn, "/sites")
+
+        assert element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
+        assert element_exists?(html, ~s|[data-test-id="consolidated-view-stats-loaded"]|)
+        assert element_exists?(html, ~s|[data-test-id="consolidated-view-chart-loaded"]|)
+      end
+
+      test "consolidated view presents consolidated stats", %{conn: conn, user: user} do
+        site1 = new_site(owner: user)
+        site2 = new_site(owner: user)
+
+        populate_stats(site1, [
+          build(:pageview, user_id: 1),
+          build(:pageview, user_id: 1),
+          build(:pageview)
+        ])
+
+        populate_stats(site2, [
+          build(:pageview, user_id: 3)
+        ])
+
+        team = team_of(user)
+
+        conn = set_current_team(conn, team)
+
+        new_consolidated_view(team)
+
+        {:ok, _lv, html} = live(conn, "/sites")
+
+        stats = text_of_element(html, ~s|[data-test-id="consolidated-view-stats-loaded"]|)
+        assert stats =~ "Unique visitors 3"
+        assert stats =~ "Total visits 3"
+        assert stats =~ "Total pageviews 4"
+        assert stats =~ "Views per visit 1.33"
+      end
+
+      test "consolidated view does not show up for non-superadmin (temp)", %{conn: conn} do
+        user = new_user()
+        new_site(owner: user)
+        team = team_of(user)
+
+        conn = set_current_team(conn, team)
+
+        {:ok, _lv, html} = live(conn, "/sites")
+
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
+
+        new_consolidated_view(team)
+
+        {:ok, _lv, html} = live(conn, "/sites")
+
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-stats-loaded"]|)
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-chart-loaded"]|)
+      end
     end
   end
 
@@ -192,7 +367,7 @@ defmodule PlausibleWeb.Live.SitesTest do
       assert text_of_element(
                html,
                ~s/li[data-domain="#{site.domain}"] a[phx-value-domain]/
-             ) == "Pin Site"
+             ) == "Pin site"
     end
 
     test "site state changes when pin toggled", %{conn: conn, user: user} do
@@ -209,7 +384,7 @@ defmodule PlausibleWeb.Live.SitesTest do
 
       assert html =~ "Site pinned"
 
-      assert text_of_element(html, button_selector) == "Unpin Site"
+      assert text_of_element(html, button_selector) == "Unpin site"
 
       html =
         lv
@@ -218,7 +393,7 @@ defmodule PlausibleWeb.Live.SitesTest do
 
       assert html =~ "Site unpinned"
 
-      assert text_of_element(html, button_selector) == "Pin Site"
+      assert text_of_element(html, button_selector) == "Pin site"
     end
 
     test "shows error when pins limit hit", %{conn: conn, user: user} do
@@ -238,7 +413,8 @@ defmodule PlausibleWeb.Live.SitesTest do
         |> element(button_selector)
         |> render_click()
 
-      assert text(html) =~ "Looks like you've hit the pinned sites limit!"
+      assert html =~
+               LazyHTML.html_escape("Looks like you've hit the pinned sites limit!")
     end
 
     test "does not allow pinning site user doesn't have access to", %{conn: conn, user: user} do
@@ -256,15 +432,5 @@ defmodule PlausibleWeb.Live.SitesTest do
     lv
     |> element("form")
     |> render_change(%{id => text})
-  end
-
-  defp get_invitation_data(html) do
-    html
-    |> text_of_attr("div[x-data]", "x-data")
-    |> String.trim("dropdown")
-    |> String.replace("selectedInvitation:", "\"selectedInvitation\":")
-    |> String.replace("invitationOpen:", "\"invitationOpen\":")
-    |> String.replace("invitations:", "\"invitations\":")
-    |> Jason.decode!()
   end
 end

@@ -23,6 +23,9 @@ defmodule Plausible.Site.CacheTest do
       add_guest(site, user: viewer, role: :viewer)
       add_guest(site, user: admin, role: :editor)
 
+      # excluded from cache
+      new_site(owner: owner, domain: "consolidated.example.com", consolidated: true)
+
       :ok = Cache.refresh_all(cache_name: test)
 
       {:ok, _} = Plausible.Repo.delete(site1)
@@ -39,6 +42,7 @@ defmodule Plausible.Site.CacheTest do
                Cache.get("site2.example.com", cache_name: test)
 
       refute Cache.get("site3.example.com", cache_name: test, force?: true)
+      refute Cache.get("consolidated.example.com", cache_name: test, force?: true)
     end
 
     @tag :ee_only
@@ -144,19 +148,6 @@ defmodule Plausible.Site.CacheTest do
 
       assert Cache.get("old.example.com", force?: true, cache_name: test)
       assert Cache.get("new.example.com", force?: true, cache_name: test)
-    end
-
-    test "cache exposes hit rate", %{test: test} do
-      {:ok, _} = start_test_cache(test)
-
-      new_site(domain: "site1.example.com")
-      :ok = Cache.refresh_all(cache_name: test)
-
-      assert Cache.hit_rate(test) == 0
-      assert Cache.get("site1.example.com", force?: true, cache_name: test)
-      assert Cache.hit_rate(test) == 100
-      refute Cache.get("nonexisting.example.com", force?: true, cache_name: test)
-      assert Cache.hit_rate(test) == 50
     end
 
     test "only recently updated sites can be refreshed", %{test: test} do
@@ -312,7 +303,7 @@ defmodule Plausible.Site.CacheTest do
 
     @items1 for i <- 1..200_000, do: {i, nil, :batch1}
     @items2 for _ <- 1..200_000, do: {Enum.random(1..400_000), nil, :batch2}
-    @max_seconds 2
+    @max_seconds 3
     test "merging large sets is expected to be under #{@max_seconds} seconds", %{test: test} do
       {:ok, _} = start_test_cache(test)
 

@@ -21,14 +21,13 @@ defmodule Plausible.Ingestion.Event do
             salts: nil,
             changeset: nil
 
-  @verification_user_agent Plausible.Verification.user_agent()
-
   @type drop_reason() ::
           :bot
           | :spam_referrer
           | GateKeeper.policy()
           | :invalid
           | :dc_ip
+          | :threat_ip
           | :site_ip_blocklist
           | :site_country_blocklist
           | :site_page_blocklist
@@ -36,6 +35,9 @@ defmodule Plausible.Ingestion.Event do
           | :verification_agent
           | :lock_timeout
           | :no_session_for_engagement
+          | :persist_timeout
+          | :persist_error
+          | :persist_decode_error
 
   @type t() :: %__MODULE__{
           domain: String.t() | nil,
@@ -57,6 +59,7 @@ defmodule Plausible.Ingestion.Event do
         for domain <- domains, do: drop(new(domain, request), :spam_referrer)
       else
         Enum.reduce(domains, [], fn domain, acc ->
+          # credo:disable-for-next-line Credo.Check.Refactor.Nesting
           case GateKeeper.check(domain) do
             {:allow, site} ->
               processed =
@@ -86,15 +89,27 @@ defmodule Plausible.Ingestion.Event do
     [:plausible, :ingest, :event, :dropped]
   end
 
+  @spec telemetry_pipeline_step_duration() :: [atom()]
   def telemetry_pipeline_step_duration() do
     [:plausible, :ingest, :pipeline, :step]
+  end
+
+  @spec telemetry_ua_parse_timeout() :: [atom()]
+  def telemetry_ua_parse_timeout() do
+    [:plausible, :ingest, :user_agent_parse, :timeout]
+  end
+
+  @spec emit_telemetry_ua_parse_timeout() :: :ok
+  def emit_telemetry_ua_parse_timeout() do
+    :telemetry.execute(telemetry_ua_parse_timeout(), %{}, %{})
   end
 
   @spec emit_telemetry_buffered(t()) :: :ok
   def emit_telemetry_buffered(event) do
     :telemetry.execute(telemetry_event_buffered(), %{}, %{
       domain: event.domain,
-      request_timestamp: event.request.timestamp
+      request_timestamp: event.request.timestamp,
+      tracker_script_version: event.request.tracker_script_version
     })
   end
 
@@ -106,7 +121,8 @@ defmodule Plausible.Ingestion.Event do
       %{
         domain: event.domain,
         reason: reason,
-        request_timestamp: event.request.timestamp
+        request_timestamp: event.request.timestamp,
+        tracker_script_version: event.request.tracker_script_version
       }
     )
   end
@@ -115,6 +131,7 @@ defmodule Plausible.Ingestion.Event do
     [
       drop_verification_agent: &drop_verification_agent/2,
       drop_datacenter_ip: &drop_datacenter_ip/2,
+      drop_threat_ip: &drop_threat_ip/2,
       drop_shield_rule_hostname: &drop_shield_rule_hostname/2,
       drop_shield_rule_page: &drop_shield_rule_page/2,
       drop_shield_rule_ip: &drop_shield_rule_ip/2,
@@ -129,8 +146,7 @@ defmodule Plausible.Ingestion.Event do
       put_salts: &put_salts/2,
       put_user_id: &put_user_id/2,
       validate_clickhouse_event: &validate_clickhouse_event/2,
-      register_session: &register_session/2,
-      write_to_buffer: &write_to_buffer/2
+      register_session: &register_session/2
     ]
   end
 
@@ -177,20 +193,36 @@ defmodule Plausible.Ingestion.Event do
     struct!(event, clickhouse_session_attrs: Map.merge(event.clickhouse_session_attrs, attrs))
   end
 
-  defp drop_verification_agent(%__MODULE__{} = event, _context) do
-    case event.request.user_agent do
-      @verification_user_agent ->
-        drop(event, :verification_agent)
+  on_ee do
+    @verification_user_agent Plausible.InstallationSupport.user_agent()
 
-      _ ->
-        event
+    defp drop_verification_agent(%__MODULE__{} = event, _context) do
+      case event.request.user_agent do
+        @verification_user_agent ->
+          drop(event, :verification_agent)
+
+        _ ->
+          event
+      end
     end
+  else
+    defp drop_verification_agent(%__MODULE__{} = event, _context), do: event
   end
 
   defp drop_datacenter_ip(%__MODULE__{} = event, _context) do
     case event.request.ip_classification do
       "dc_ip" ->
         drop(event, :dc_ip)
+
+      _any ->
+        event
+    end
+  end
+
+  defp drop_threat_ip(%__MODULE__{} = event, _context) do
+    case event.request.ip_classification do
+      "threat_ip" ->
+        drop(event, :threat_ip)
 
       _any ->
         event
@@ -223,13 +255,13 @@ defmodule Plausible.Ingestion.Event do
 
   defp put_user_agent(%__MODULE__{} = event, _context) do
     case parse_user_agent(event.request) do
-      %UAInspector.Result{client: %UAInspector.Result.Client{name: "Headless Chrome"}} ->
+      {:ok, %UAInspector.Result{client: %UAInspector.Result.Client{name: "Headless Chrome"}}} ->
         drop(event, :bot)
 
-      %UAInspector.Result.Bot{} ->
+      {:ok, %UAInspector.Result.Bot{}} ->
         drop(event, :bot)
 
-      %UAInspector.Result{} = user_agent ->
+      {:ok, %UAInspector.Result{} = user_agent} ->
         update_session_attrs(event, %{
           operating_system: os_name(user_agent),
           operating_system_version: os_version(user_agent),
@@ -252,7 +284,8 @@ defmodule Plausible.Ingestion.Event do
       hostname: event.request.hostname,
       pathname: event.request.pathname,
       scroll_depth: event.request.scroll_depth,
-      engagement_time: event.request.engagement_time
+      engagement_time: event.request.engagement_time,
+      interactive?: event.request.interactive?
     })
   end
 
@@ -366,8 +399,7 @@ defmodule Plausible.Ingestion.Event do
   end
 
   defp register_session(%__MODULE__{} = event, context) do
-    write_buffer_insert =
-      Keyword.get(context, :session_write_buffer_insert, &Plausible.Session.WriteBuffer.insert/1)
+    persistor_opts = Keyword.get(context, :persistor_opts, [])
 
     previous_user_id =
       generate_user_id(
@@ -377,33 +409,14 @@ defmodule Plausible.Ingestion.Event do
         event.salts.previous
       )
 
-    session_result =
-      Plausible.Session.CacheStore.on_event(
-        event.clickhouse_event,
-        event.clickhouse_session_attrs,
-        previous_user_id,
-        write_buffer_insert
-      )
+    case Plausible.Ingestion.Persistor.persist_event(event, previous_user_id, persistor_opts) do
+      {:ok, event} ->
+        emit_telemetry_buffered(event)
+        event
 
-    case session_result do
-      {:ok, :no_session_for_engagement} ->
-        drop(event, :no_session_for_engagement)
-
-      {:error, :timeout} ->
-        drop(event, :lock_timeout)
-
-      {:ok, session} ->
-        %{
-          event
-          | clickhouse_event: ClickhouseEventV2.merge_session(event.clickhouse_event, session)
-        }
+      {:error, reason} ->
+        drop(event, reason)
     end
-  end
-
-  defp write_to_buffer(%__MODULE__{clickhouse_event: clickhouse_event} = event, _context) do
-    {:ok, _} = Plausible.Event.WriteBuffer.insert(clickhouse_event)
-    emit_telemetry_buffered(event)
-    event
   end
 
   @click_id_params ["gclid", "gbraid", "wbraid", "msclkid", "fbclid", "twclid"]
@@ -415,13 +428,33 @@ defmodule Plausible.Ingestion.Event do
     |> Enum.find(fn param_name -> Map.has_key?(query_params, param_name) end)
   end
 
+  @parse_user_agent_timeout 200
   defp parse_user_agent(%Request{user_agent: user_agent}) when is_binary(user_agent) do
-    Plausible.Cache.Adapter.get(:user_agents, user_agent, fn ->
-      UAInspector.parse(user_agent)
+    Plausible.Cache.Adapter.fetch(:user_agents, user_agent, fn ->
+      parse_user_agent_safe(user_agent)
     end)
   end
 
   defp parse_user_agent(request), do: request
+
+  defp parse_user_agent_safe(user_agent) do
+    task =
+      Task.Supervisor.async_nolink(
+        {:via, PartitionSupervisor, {Plausible.UserAgentParseTaskSupervisor, self()}},
+        fn ->
+          UAInspector.parse(user_agent)
+        end
+      )
+
+    case Task.yield(task, @parse_user_agent_timeout) || Task.shutdown(task) do
+      {:ok, result} ->
+        {:ok, result}
+
+      nil ->
+        emit_telemetry_ua_parse_timeout()
+        {:error, :timeout}
+    end
+  end
 
   defp browser_name(ua) do
     case ua.client do
@@ -463,16 +496,6 @@ defmodule Plausible.Ingestion.Event do
 
       %Device{type: t} when t in @desktop_types ->
         "Desktop"
-
-      %Device{type: :unknown} ->
-        nil
-
-      %Device{type: type} ->
-        Sentry.capture_message("Could not determine device type from UAInspector",
-          extra: %{type: type}
-        )
-
-        nil
 
       _ ->
         nil

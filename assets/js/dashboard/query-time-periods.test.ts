@@ -1,5 +1,4 @@
-/** @format */
-
+import { DEFAULT_SITE } from '../../test-utils/app-context-providers'
 import {
   ComparisonMode,
   getDashboardTimeSettings,
@@ -7,6 +6,7 @@ import {
   getStoredPeriod,
   QueryPeriod
 } from './query-time-periods'
+import { formatISO, utcNow } from './util/date'
 
 describe(`${getStoredPeriod.name}`, () => {
   const domain = 'any.site'
@@ -24,8 +24,10 @@ describe(`${getStoredPeriod.name}`, () => {
 })
 
 describe(`${getDashboardTimeSettings.name}`, () => {
+  const site = DEFAULT_SITE
+
   const defaultValues = {
-    period: QueryPeriod['7d'],
+    period: QueryPeriod['28d'],
     comparison: null,
     match_day_of_week: true
   }
@@ -43,23 +45,54 @@ describe(`${getDashboardTimeSettings.name}`, () => {
   it('returns defaults if nothing stored and no search', () => {
     expect(
       getDashboardTimeSettings({
+        site: site,
         searchValues: emptySearchValues,
         storedValues: emptyStoredValues,
-        defaultValues
+        defaultValues,
+        segmentIsExpanded: false
       })
     ).toEqual(defaultValues)
+  })
+
+  it('defaults period to today if the site was created today', () => {
+    expect(
+      getDashboardTimeSettings({
+        site: { ...site, nativeStatsBegin: formatISO(utcNow()) },
+        searchValues: emptySearchValues,
+        storedValues: emptyStoredValues,
+        defaultValues,
+        segmentIsExpanded: false
+      })
+    ).toEqual({ ...defaultValues, period: 'day' })
+  })
+
+  it('defaults period to today if the site was created yesterday', () => {
+    expect(
+      getDashboardTimeSettings({
+        site: {
+          ...site,
+          nativeStatsBegin: formatISO(utcNow().subtract(1, 'day'))
+        },
+        searchValues: emptySearchValues,
+        storedValues: emptyStoredValues,
+        defaultValues,
+        segmentIsExpanded: false
+      })
+    ).toEqual({ ...defaultValues, period: 'day' })
   })
 
   it('returns stored values if no search', () => {
     expect(
       getDashboardTimeSettings({
+        site: site,
         searchValues: emptySearchValues,
         storedValues: {
           period: QueryPeriod['12mo'],
           comparison: ComparisonMode.year_over_year,
           match_day_of_week: false
         },
-        defaultValues
+        defaultValues,
+        segmentIsExpanded: false
       })
     ).toEqual({
       period: QueryPeriod['12mo'],
@@ -71,6 +104,7 @@ describe(`${getDashboardTimeSettings.name}`, () => {
   it('uses values from search above all else, treats ComparisonMode.off as null', () => {
     expect(
       getDashboardTimeSettings({
+        site: site,
         searchValues: {
           period: QueryPeriod['year'],
           comparison: ComparisonMode.off,
@@ -81,10 +115,31 @@ describe(`${getDashboardTimeSettings.name}`, () => {
           comparison: ComparisonMode.year_over_year,
           match_day_of_week: false
         },
-        defaultValues
+        defaultValues,
+        segmentIsExpanded: false
       })
     ).toEqual({
       period: QueryPeriod['year'],
+      comparison: null,
+      match_day_of_week: true
+    })
+  })
+
+  it('respects segmentIsExpanded: true option: comparison and edit segment mode are mutually exclusive', () => {
+    expect(
+      getDashboardTimeSettings({
+        site: site,
+        searchValues: {
+          period: QueryPeriod['custom'],
+          comparison: ComparisonMode.previous_period,
+          match_day_of_week: true
+        },
+        storedValues: emptyStoredValues,
+        defaultValues,
+        segmentIsExpanded: true
+      })
+    ).toEqual({
+      period: QueryPeriod['custom'],
       comparison: null,
       match_day_of_week: true
     })

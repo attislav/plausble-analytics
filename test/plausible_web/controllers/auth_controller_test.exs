@@ -68,7 +68,7 @@ defmodule PlausibleWeb.AuthControllerTest do
           }
         )
 
-      assert redirected_to(conn, 302) == "/activate?flow=register"
+      assert redirected_to(conn, 302) == "/activate?flow=register&team_identifier="
     end
 
     test "logs the user in", %{conn: conn} do
@@ -136,7 +136,8 @@ defmodule PlausibleWeb.AuthControllerTest do
           email: "user@example.com",
           password: "very-secret-and-very-long-123",
           password_confirmation: "very-secret-and-very-long-123",
-          register_action: "register_from_invitation_form"
+          register_action: "register_from_invitation_form",
+          team_identifier: ""
         }
       )
 
@@ -153,11 +154,31 @@ defmodule PlausibleWeb.AuthControllerTest do
             email: "user@example.com",
             password: "very-secret-and-very-long-123",
             password_confirmation: "very-secret-and-very-long-123",
-            register_action: "register_from_invitation_form"
+            register_action: "register_from_invitation_form",
+            team_identifier: ""
           }
         )
 
-      assert redirected_to(conn, 302) == "/activate?flow=invitation"
+      assert redirected_to(conn, 302) == "/activate?flow=invitation&team_identifier="
+    end
+
+    test "user with team invite is redirected to activate page after registration", %{conn: conn} do
+      team_identifier = Ecto.UUID.generate()
+
+      conn =
+        post(conn, "/login",
+          user: %{
+            name: "Jane Doe",
+            email: "user@example.com",
+            password: "very-secret-and-very-long-123",
+            password_confirmation: "very-secret-and-very-long-123",
+            register_action: "register_from_invitation_form",
+            team_identifier: team_identifier
+          }
+        )
+
+      assert redirected_to(conn, 302) ==
+               "/activate?flow=invitation&team_identifier=#{team_identifier}"
     end
 
     test "logs the user in", %{conn: conn, user: user} do
@@ -168,12 +189,97 @@ defmodule PlausibleWeb.AuthControllerTest do
             email: "user@example.com",
             password: "very-secret-and-very-long-123",
             password_confirmation: "very-secret-and-very-long-123",
-            register_action: "register_from_invitation_form"
+            register_action: "register_from_invitation_form",
+            team_identifier: ""
           }
         )
 
       assert %{sessions: [%{token: token}]} = user |> Repo.reload!() |> Repo.preload(:sessions)
       assert get_session(conn, :user_token) == token
+    end
+
+    test "logs the user in and redirects to sites index when email is already verified", %{
+      conn: conn,
+      user: user
+    } do
+      user |> Ecto.Changeset.change(email_verified: true) |> Repo.update!()
+
+      conn =
+        post(conn, "/login",
+          user: %{
+            name: "Jane Doe",
+            email: "user@example.com",
+            password: "very-secret-and-very-long-123",
+            password_confirmation: "very-secret-and-very-long-123",
+            register_action: "register_from_invitation_form",
+            team_identifier: ""
+          }
+        )
+
+      assert %{sessions: [%{token: token}]} = user |> Repo.reload!() |> Repo.preload(:sessions)
+      assert get_session(conn, :user_token) == token
+      assert redirected_to(conn, 302) == Routes.site_path(conn, :index)
+    end
+
+    test "logs the user in, accepts team invite and redirects to team sites index", %{
+      conn: conn,
+      user: user
+    } do
+      owner = new_user()
+      _site = new_site(owner: owner)
+      team = team_of(owner)
+
+      invite_member(team, user, role: :viewer, inviter: owner)
+
+      user |> Ecto.Changeset.change(email_verified: true) |> Repo.update!()
+
+      conn =
+        post(conn, "/login",
+          user: %{
+            name: "Jane Doe",
+            email: "user@example.com",
+            password: "very-secret-and-very-long-123",
+            password_confirmation: "very-secret-and-very-long-123",
+            register_action: "register_from_invitation_form",
+            team_identifier: team.identifier
+          }
+        )
+
+      assert %{sessions: [%{token: token}]} = user |> Repo.reload!() |> Repo.preload(:sessions)
+      assert get_session(conn, :user_token) == token
+      assert redirected_to(conn, 302) == Routes.site_path(conn, :index, __team: team.identifier)
+
+      assert_team_membership(user, team, :viewer)
+    end
+
+    test "logs the user in and redirects to team sites index even when there's no matching team invite",
+         %{
+           conn: conn,
+           user: user
+         } do
+      owner = new_user()
+      _site = new_site(owner: owner)
+      team = team_of(owner)
+
+      add_member(team, user: user, role: :viewer)
+
+      user |> Ecto.Changeset.change(email_verified: true) |> Repo.update!()
+
+      conn =
+        post(conn, "/login",
+          user: %{
+            name: "Jane Doe",
+            email: "user@example.com",
+            password: "very-secret-and-very-long-123",
+            password_confirmation: "very-secret-and-very-long-123",
+            register_action: "register_from_invitation_form",
+            team_identifier: team.identifier
+          }
+        )
+
+      assert %{sessions: [%{token: token}]} = user |> Repo.reload!() |> Repo.preload(:sessions)
+      assert get_session(conn, :user_token) == token
+      assert redirected_to(conn, 302) == Routes.site_path(conn, :index, __team: team.identifier)
     end
   end
 
@@ -194,6 +300,18 @@ defmodule PlausibleWeb.AuthControllerTest do
 
       assert html_response(conn, 200) =~ "Please enter the 4-digit code we sent to"
     end
+
+    test "passes team identifier in form data", %{conn: conn, user: user} do
+      Auth.EmailVerification.issue_code(user)
+
+      team_identifier = Ecto.UUID.generate()
+
+      conn = get(conn, "/activate?team_identifier=#{team_identifier}")
+
+      assert html = html_response(conn, 200)
+
+      assert text_of_attr(html, "input[name=team_identifier]", "value") == team_identifier
+    end
   end
 
   describe "POST /activate/request-code" do
@@ -211,7 +329,7 @@ defmodule PlausibleWeb.AuthControllerTest do
     test "regenerates an activation pin even if there's one already", %{conn: conn, user: user} do
       five_minutes_ago =
         NaiveDateTime.utc_now()
-        |> Timex.shift(minutes: -5)
+        |> NaiveDateTime.shift(minute: -5)
         |> NaiveDateTime.truncate(:second)
 
       {:ok, verification} = Auth.EmailVerification.issue_code(user, five_minutes_ago)
@@ -262,7 +380,7 @@ defmodule PlausibleWeb.AuthControllerTest do
     test "with expired pin - reloads the form with error", %{conn: conn, user: user} do
       one_day_ago =
         NaiveDateTime.utc_now()
-        |> Timex.shift(days: -1)
+        |> NaiveDateTime.shift(day: -1)
         |> NaiveDateTime.truncate(:second)
 
       {:ok, verification} = Auth.EmailVerification.issue_code(user, one_day_ago)
@@ -296,9 +414,49 @@ defmodule PlausibleWeb.AuthControllerTest do
 
       verification = Repo.get_by!(Auth.EmailActivationCode, user_id: user.id)
 
-      conn = post(conn, "/activate", %{code: verification.code})
+      conn = post(conn, "/activate", %{code: verification.code, team_identifier: ""})
 
       assert redirected_to(conn) == "/sites?flow="
+    end
+
+    test "accepts team invite and redirects to team sites, if team provided", %{
+      conn: conn,
+      user: user
+    } do
+      owner = new_user()
+      _site = new_site(owner: owner)
+      team = team_of(owner)
+      invite_member(team, user, role: :viewer, inviter: owner)
+
+      Repo.update!(Auth.User.changeset(user, %{email_verified: false}))
+
+      {:ok, %{code: code}} = Auth.EmailVerification.issue_code(user)
+
+      conn = post(conn, "/activate", %{code: code, team_identifier: team.identifier})
+
+      assert redirected_to(conn) ==
+               Routes.site_path(conn, :index, __team: team.identifier, flow: "")
+
+      assert_team_membership(user, team, :viewer)
+    end
+
+    test "redirects to team sites if team provided, even if there's no invite", %{
+      conn: conn,
+      user: user
+    } do
+      owner = new_user()
+      _site = new_site(owner: owner)
+      team = team_of(owner)
+      add_member(team, user: user, role: :viewer)
+
+      Repo.update!(Auth.User.changeset(user, %{email_verified: false}))
+
+      {:ok, %{code: code}} = Auth.EmailVerification.issue_code(user)
+
+      conn = post(conn, "/activate", %{code: code, team_identifier: team.identifier})
+
+      assert redirected_to(conn) ==
+               Routes.site_path(conn, :index, __team: team.identifier, flow: "")
     end
 
     test "removes used up verification code", %{conn: conn, user: user} do
@@ -322,19 +480,49 @@ defmodule PlausibleWeb.AuthControllerTest do
     test "renders `return_to` query param as hidden input", %{conn: conn} do
       conn = get(conn, "/login?return_to=/dummy.site")
 
-      [input_value] =
+      input_value =
         conn
         |> html_response(200)
-        |> Floki.parse_document!()
-        |> Floki.attribute("input[name=return_to]", "value")
+        |> text_of_attr("input[name=return_to]", "value")
 
       assert input_value == "/dummy.site"
+    end
+
+    @tag :ee_only
+    test "redirects to sso login if preferred", %{conn: conn} do
+      conn = PlausibleWeb.LoginPreference.set_sso(conn)
+      conn = get(conn, "/login?return_to=foo")
+      assert redirected_to(conn, 302) == "/sso/login?return_to=foo"
+    end
+
+    @tag :ee_only
+    test "keeps standard login form if preference manually overridden", %{conn: conn} do
+      conn = PlausibleWeb.LoginPreference.set_sso(conn)
+      conn = get(conn, "/login?prefer=manual")
+      assert html_response(conn, 200) =~ "Enter your account credentials"
     end
   end
 
   describe "POST /login" do
     test "valid email and password - logs the user in", %{conn: conn} do
       user = insert(:user, password: "password")
+
+      conn = post(conn, "/login", email: user.email, password: "password")
+
+      assert %{sessions: [%{token: token}]} = user |> Repo.reload!() |> Repo.preload(:sessions)
+      assert get_session(conn, :user_token) == token
+      assert redirected_to(conn) == "/sites"
+    end
+
+    test "valid email and password, user on multiple teams - logs the user in", %{conn: conn} do
+      user = insert(:user, password: "password")
+
+      # first team
+      new_site(owner: user)
+
+      # another team
+      another_team = new_site().team |> Plausible.Teams.complete_setup()
+      add_member(another_team, user: user, role: :owner)
 
       conn = post(conn, "/login", email: user.email, password: "password")
 
@@ -411,6 +599,76 @@ defmodule PlausibleWeb.AuthControllerTest do
       refute get_session(conn, :user_token)
     end
 
+    on_ee do
+      test "SSO owner user - logs in", %{conn: conn} do
+        owner = new_user(name: "Jane Shelley", email: "jane@example.com", password: "password")
+        team = new_site(owner: owner).team
+        team = Plausible.Teams.complete_setup(team)
+
+        # Setup SSO
+        integration = Auth.SSO.initiate_saml_integration(team)
+
+        {:ok, sso_domain} = Auth.SSO.Domains.add(integration, "example.com")
+        _sso_domain = Auth.SSO.Domains.verify(sso_domain, skip_checks?: true)
+
+        identity = new_identity(owner.name, owner.email, integration)
+        {:ok, _, _, _sso_user} = Auth.SSO.provision_user(identity)
+
+        conn = post(conn, "/login", email: owner.email, password: "password")
+
+        assert redirected_to(conn, 302) == Routes.site_path(conn, :index)
+
+        assert conn.resp_cookies["session_2fa"].max_age == 0
+        assert %{sessions: [%{token: token}]} = owner |> Repo.reload!() |> Repo.preload(:sessions)
+        assert get_session(conn, :user_token) == token
+      end
+
+      test "SSO user other than owner - renders login form again", %{conn: conn} do
+        owner = new_user()
+        team = new_site(owner: owner).team
+        member = new_user(name: "Jane Shelley", email: "jane@example.com", password: "password")
+        add_member(team, user: member, role: :viewer)
+
+        # Setup SSO
+        integration = Auth.SSO.initiate_saml_integration(team)
+
+        {:ok, sso_domain} = Auth.SSO.Domains.add(integration, "example.com")
+        _sso_domain = Auth.SSO.Domains.verify(sso_domain, skip_checks?: true)
+
+        identity = new_identity(member.name, member.email, integration)
+        {:ok, _, _, _sso_user} = Auth.SSO.provision_user(identity)
+
+        conn = post(conn, "/login", email: member.email, password: "password")
+
+        assert get_session(conn, :user_token) == nil
+        assert html_response(conn, 200) =~ "Enter your account credentials"
+      end
+
+      test "SSO user other than owner with personal team - renders login form again", %{
+        conn: conn
+      } do
+        owner = new_user()
+        team = new_site(owner: owner).team
+        member = new_user(name: "Jane Shelley", email: "jane@example.com", password: "password")
+        {:ok, _} = Plausible.Teams.get_or_create(member)
+        add_member(team, user: member, role: :viewer)
+
+        # Setup SSO
+        integration = Auth.SSO.initiate_saml_integration(team)
+
+        {:ok, sso_domain} = Auth.SSO.Domains.add(integration, "example.com")
+        _sso_domain = Auth.SSO.Domains.verify(sso_domain, skip_checks?: true)
+
+        identity = new_identity(member.name, member.email, integration)
+        {:ok, _, _, _sso_user} = Auth.SSO.provision_user(identity)
+
+        conn = post(conn, "/login", email: member.email, password: "password")
+
+        assert get_session(conn, :user_token) == nil
+        assert html_response(conn, 200) =~ "Enter your account credentials"
+      end
+    end
+
     test "email does not exist - renders login form again", %{conn: conn} do
       conn = post(conn, "/login", email: "user@example.com", password: "password")
 
@@ -447,6 +705,36 @@ defmodule PlausibleWeb.AuthControllerTest do
 
       assert html_response(response, 429) =~ "Too many login attempts"
     end
+
+    test "malicious automated logins", %{conn: conn1} do
+      conn =
+        post(conn1, "/login", %{
+          "g-recaptcha-response" => "NwBMkEWbh",
+          "user[email]" => "some@example.com",
+          "user[name]" => "CJCtGVXVgfORdNN",
+          "user[password]" => "[Filtered]",
+          "user[password_confirmation]" => "[Filtered]",
+          "user[register_action]" => "register_form"
+        })
+
+      assert response(conn, 403)
+
+      conn =
+        conn1
+        |> put_req_header("content-type", "application/json")
+        |> post("/login", """
+          {
+          "g-recaptcha-response": "NwBMkEWbh",
+          "user[email]": "some@example.com",
+          "user[name]": "CJCtGVXVgfORdNN",
+          "user[password]": "[Filtered]",
+          "user[password_confirmation]": "[Filtered]",
+          "user[register_action]": "register_form"
+          }
+        """)
+
+      assert response(conn, 403)
+    end
   end
 
   describe "GET /password/request-reset" do
@@ -478,6 +766,43 @@ defmodule PlausibleWeb.AuthControllerTest do
       conn = post(conn, "/password/request-reset", %{email: user.email})
 
       assert html_response(conn, 200) =~ "Please complete the captcha"
+    end
+  end
+
+  on_ee do
+    describe "POST /password/request-reset - SSO user" do
+      setup [:create_user, :create_site, :create_team, :setup_sso, :provision_sso_user]
+
+      test "initiates reset for owner SSO user email", %{conn: conn, user: user} do
+        mock_captcha_success()
+        conn = post(conn, "/password/request-reset", %{email: user.email})
+
+        assert html_response(conn, 200)
+
+        assert_email_delivered_with(
+          subject: "Plausible password reset",
+          to: [nil: user.email]
+        )
+      end
+
+      test "does not initiate reset for non-owner SSO user", %{conn: conn, user: user, team: team} do
+        add_member(team, role: :owner)
+
+        assert {:ok, _} =
+                 Plausible.Teams.Memberships.UpdateRole.update(team, user.id, "editor", user)
+
+        assert Plausible.Teams.Memberships.team_role(team, user) == {:ok, :editor}
+
+        mock_captcha_success()
+        conn = post(conn, "/password/request-reset", %{email: user.email})
+
+        assert html_response(conn, 200)
+
+        refute_email_delivered_with(
+          subject: "Plausible password reset",
+          to: [nil: user.email]
+        )
+      end
     end
   end
 
@@ -545,6 +870,20 @@ defmodule PlausibleWeb.AuthControllerTest do
     end
   end
 
+  on_ee do
+    describe "DELETE /me - SSO user" do
+      setup [:create_user, :create_site, :create_team, :setup_sso, :provision_sso_user, :log_in]
+
+      test "refuses to delete SSO user", %{conn: conn, user: user} do
+        conn = delete(conn, "/me")
+
+        assert redirected_to(conn, 302) == Routes.site_path(conn, :index)
+
+        assert Repo.reload(user)
+      end
+    end
+  end
+
   describe "DELETE /me" do
     setup [:create_user, :log_in, :create_site]
     use Plausible.Repo
@@ -587,7 +926,6 @@ defmodule PlausibleWeb.AuthControllerTest do
 
       insert(:google_auth, site: site, user: user)
       subscribe_to_growth_plan(user, status: Subscription.Status.deleted())
-      subscribe_to_growth_plan(user, status: Subscription.Status.active())
       subscribe_to_enterprise_plan(user, site_limit: 1, subscription?: false)
 
       {:ok, team} = Plausible.Teams.get_or_create(user)
@@ -599,6 +937,22 @@ defmodule PlausibleWeb.AuthControllerTest do
       assert Repo.all(Plausible.Billing.Subscription) == []
       assert Repo.all(Plausible.Billing.EnterprisePlan) == []
       refute Repo.get(Plausible.Teams.Team, team.id)
+    end
+
+    test "refuses to delete when a personal team has an active subscription", %{
+      conn: conn,
+      user: user
+    } do
+      subscribe_to_growth_plan(user, status: Subscription.Status.active())
+
+      conn = delete(conn, "/me")
+
+      assert redirected_to(conn, 302) == Routes.settings_path(conn, :danger_zone)
+
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~
+               "You have an active subscription which must be canceled first"
+
+      assert Repo.reload(user)
     end
 
     test "deletes sites that the user owns", %{conn: conn, user: user, site: owner_site} do
@@ -616,9 +970,7 @@ defmodule PlausibleWeb.AuthControllerTest do
       user: user,
       site: site
     } do
-      site.team
-      |> Plausible.Teams.Team.setup_changeset()
-      |> Repo.update!()
+      Plausible.Teams.complete_setup(site.team)
 
       conn = delete(conn, "/me")
 
@@ -635,9 +987,7 @@ defmodule PlausibleWeb.AuthControllerTest do
       user: user,
       site: site
     } do
-      site.team
-      |> Plausible.Teams.Team.setup_changeset()
-      |> Repo.update!()
+      Plausible.Teams.complete_setup(site.team)
 
       another_owner = new_user()
       another_site = new_site(owner: another_owner)
@@ -654,17 +1004,117 @@ defmodule PlausibleWeb.AuthControllerTest do
       assert Repo.reload(user)
     end
 
+    test "context > team is autodeleted - personal segment is also deleted", %{
+      conn: conn,
+      user: user,
+      site: owner_site
+    } do
+      segment =
+        insert(:segment,
+          type: :personal,
+          owner: user,
+          site: owner_site,
+          name: "personal segment"
+        )
+
+      delete(conn, "/me")
+
+      refute Repo.reload(segment)
+    end
+
+    test "context > team is autodeleted - site segment is also deleted", %{
+      conn: conn,
+      user: user,
+      site: owner_site
+    } do
+      segment =
+        insert(:segment,
+          type: :site,
+          owner: user,
+          site: owner_site,
+          name: "site segment"
+        )
+
+      delete(conn, "/me")
+
+      refute Repo.reload(segment)
+    end
+
+    test "context > team is not autodeleted - personal segment is deleted", %{
+      conn: conn,
+      user: user
+    } do
+      another_owner = new_user()
+      another_site = new_site(owner: another_owner)
+      another_team = another_owner |> team_of() |> Plausible.Teams.complete_setup()
+      add_member(another_team, user: user, role: :admin)
+
+      segment =
+        insert(:segment,
+          type: :personal,
+          owner: user,
+          site: another_site,
+          name: "personal segment"
+        )
+
+      delete(conn, "/me")
+
+      refute Repo.reload(segment)
+    end
+
+    test "context > team is not autodeleted - site segment is kept with owner=null", %{
+      conn: conn,
+      user: user
+    } do
+      another_owner = new_user()
+      another_site = new_site(owner: another_owner)
+      another_team = another_owner |> team_of() |> Plausible.Teams.complete_setup()
+      add_member(another_team, user: user, role: :admin)
+
+      segment =
+        insert(:segment,
+          type: :site,
+          owner: user,
+          site: another_site,
+          name: "site segment"
+        )
+
+      delete(conn, "/me")
+
+      assert Repo.reload(segment).owner_id == nil
+    end
+
     test "allows to delete user when not the only owner of a setup team", %{
       conn: conn,
       user: user
     } do
       another_owner = new_user()
       another_site = new_site(owner: another_owner)
+      team = another_owner |> team_of() |> Plausible.Teams.complete_setup()
       add_member(another_site.team, user: user, role: :owner)
 
       delete(conn, "/me")
 
       refute Repo.reload(user)
+      assert Repo.reload(team)
+    end
+
+    test "deletes personal team in multiple teams case as well", %{
+      conn: conn,
+      user: user
+    } do
+      new_site(owner: user)
+      personal_team = team_of(user)
+      another_owner = new_user()
+      _another_site = new_site(owner: another_owner)
+      another_team = another_owner |> team_of() |> Plausible.Teams.complete_setup()
+      add_member(another_team, user: user, role: :owner)
+
+      delete(conn, "/me")
+
+      refute Repo.reload(user)
+      assert Repo.reload(another_team)
+      refute Repo.reload(personal_team)
     end
   end
 
@@ -697,6 +1147,14 @@ defmodule PlausibleWeb.AuthControllerTest do
 
       assert element_exists?(html, "svg")
       assert html =~ secret
+      refute html =~ "You've been redirected here because your team enforces 2FA."
+    end
+
+    test "shows additional notice when `force` parameter set", %{conn: conn} do
+      conn = post(conn, Routes.auth_path(conn, :initiate_2fa_setup, force: "true"))
+
+      assert html = html_response(conn, 200)
+      assert html =~ "You've been redirected here because your team enforces 2FA."
     end
 
     test "redirects back to settings if 2FA is already setup", %{conn: conn, user: user} do
@@ -729,7 +1187,7 @@ defmodule PlausibleWeb.AuthControllerTest do
 
       assert element_exists?(
                html,
-               ~s|a[data-method="post"][data-to="#{Routes.auth_path(conn, :initiate_2fa_setup)}"|
+               ~s|a[data-method="post"][data-to="#{Routes.auth_path(conn, :initiate_2fa_setup)}"]|
              )
     end
 
@@ -754,7 +1212,7 @@ defmodule PlausibleWeb.AuthControllerTest do
 
       assert html = html_response(conn, 200)
 
-      assert list = [_ | _] = find(html, "#recovery-codes-list > *")
+      assert list = [_ | _] = find(html, "#recovery-codes-list > *") |> LazyHTML.to_tree()
       assert length(list) == 10
 
       assert user |> Repo.reload!() |> Auth.TOTP.enabled?()
@@ -810,6 +1268,23 @@ defmodule PlausibleWeb.AuthControllerTest do
     end
   end
 
+  on_ee do
+    describe "POST /2fa/disable - SSO user" do
+      setup [:create_user, :create_site, :create_team, :setup_sso, :provision_sso_user, :log_in]
+
+      test "refuses to disable for SSO user", %{conn: conn, user: user} do
+        {:ok, user, _} = Auth.TOTP.initiate(user)
+        {:ok, _, _} = Auth.TOTP.enable(user, :skip_verify)
+
+        conn = post(conn, Routes.auth_path(conn, :disable_2fa), %{password: "password"})
+
+        assert redirected_to(conn, 302) == Routes.site_path(conn, :index)
+
+        assert user |> Repo.reload!() |> Auth.TOTP.enabled?()
+      end
+    end
+  end
+
   describe "POST /2fa/recovery_codes" do
     setup [:create_user, :log_in]
 
@@ -822,7 +1297,7 @@ defmodule PlausibleWeb.AuthControllerTest do
 
       assert html = html_response(conn, 200)
 
-      assert list = [_ | _] = find(html, "#recovery-codes-list > *")
+      assert list = [_ | _] = find(html, "#recovery-codes-list > *") |> LazyHTML.to_tree()
       assert length(list) == 10
     end
 
@@ -1283,6 +1758,48 @@ defmodule PlausibleWeb.AuthControllerTest do
       # 2FA session terminated
       assert response.resp_cookies["session_2fa"].max_age == 0
       assert html_response(response, 429) =~ "Too many login attempts"
+    end
+  end
+
+  describe "GET /team/select" do
+    setup [:create_user, :log_in]
+
+    test "redirects to /sites if no teams available", %{conn: conn} do
+      conn = get(conn, Routes.auth_path(conn, :select_team))
+      assert redirected_to(conn, 302) == Routes.site_path(conn, :index)
+    end
+
+    test "redirects to /sites?__team if one team set up available", %{conn: conn, user: user} do
+      new_site(owner: user)
+      team = team_of(user)
+      assert Plausible.Teams.complete_setup(team)
+      conn = get(conn, Routes.auth_path(conn, :select_team))
+      assert redirected_to(conn, 302) == Routes.site_path(conn, :index, __team: team.identifier)
+    end
+
+    test "displays team switcher if >1 teams available", %{conn: conn, user: user} do
+      t1 = new_site(owner: user).team
+      t2 = new_site().team
+
+      add_member(t2, user: user, role: :viewer)
+
+      Plausible.Teams.complete_setup(t1)
+      Plausible.Teams.complete_setup(t2)
+
+      conn = get(conn, Routes.auth_path(conn, :select_team))
+      assert html = html_response(conn, 200)
+
+      assert text(html) =~ "Switch your current team"
+
+      assert element_exists?(
+               html,
+               ~s|a[href="#{Routes.site_path(conn, :index, __team: t1.identifier)}"]|
+             )
+
+      assert element_exists?(
+               html,
+               ~s|a[href="#{Routes.site_path(conn, :index, __team: t2.identifier)}"]|
+             )
     end
   end
 

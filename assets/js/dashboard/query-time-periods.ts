@@ -1,4 +1,3 @@
-/* @format */
 import { useEffect } from 'react'
 import {
   clearedComparisonSearch,
@@ -17,6 +16,7 @@ import {
   isThisMonth,
   isThisYear,
   isToday,
+  isTodayOrYesterday,
   lastMonth,
   nowForSite,
   parseNaiveDate,
@@ -30,7 +30,9 @@ export enum QueryPeriod {
   'day' = 'day',
   'month' = 'month',
   '7d' = '7d',
+  '28d' = '28d',
   '30d' = '30d',
+  '91d' = '91d',
   '6mo' = '6mo',
   '12mo' = '12mo',
   'year' = 'year',
@@ -64,10 +66,15 @@ export const COMPARISON_MATCH_MODE_LABELS = {
 
 export const DEFAULT_COMPARISON_MODE = ComparisonMode.previous_period
 
-export const COMPARISON_DISABLED_PERIODS = [
-  QueryPeriod.realtime,
-  QueryPeriod.all
-]
+const COMPARISON_DISABLED_PERIODS = [QueryPeriod.realtime, QueryPeriod.all]
+
+export const isComparisonForbidden = ({
+  period,
+  segmentIsExpanded
+}: {
+  period: QueryPeriod
+  segmentIsExpanded: boolean
+}) => COMPARISON_DISABLED_PERIODS.includes(period) || segmentIsExpanded
 
 export const DEFAULT_COMPARISON_MATCH_MODE = ComparisonMatchMode.MatchDayOfWeek
 
@@ -244,6 +251,7 @@ export type LinkItem = [
       query: DashboardQuery
     }) => boolean
     onEvent?: (event: Pick<Event, 'preventDefault' | 'stopPropagation'>) => void
+    hidden?: boolean
   }
 ]
 
@@ -326,8 +334,22 @@ export const getDatePeriodGroups = ({
         }
       ],
       [
+        ['Last 28 Days', 'F'],
+        {
+          search: (s) => ({
+            ...s,
+            ...clearedDateSearch,
+            period: QueryPeriod['28d'],
+            keybindHint: 'F'
+          }),
+          isActive: ({ query }) => query.period === QueryPeriod['28d'],
+          onEvent
+        }
+      ],
+      [
         ['Last 30 Days', 'T'],
         {
+          hidden: true,
           search: (s) => ({
             ...s,
             ...clearedDateSearch,
@@ -335,6 +357,19 @@ export const getDatePeriodGroups = ({
             keybindHint: 'T'
           }),
           isActive: ({ query }) => query.period === QueryPeriod['30d'],
+          onEvent
+        }
+      ],
+      [
+        ['Last 91 Days', 'N'],
+        {
+          search: (s) => ({
+            ...s,
+            ...clearedDateSearch,
+            period: QueryPeriod['91d'],
+            keybindHint: 'N'
+          }),
+          isActive: ({ query }) => query.period === QueryPeriod['91d'],
           onEvent
         }
       ]
@@ -356,14 +391,14 @@ export const getDatePeriodGroups = ({
         }
       ],
       [
-        ['Last Month'],
+        ['Last Month', 'P'],
         {
           search: (s) => ({
             ...s,
             ...clearedDateSearch,
             period: QueryPeriod.month,
             date: formatISO(lastMonth(site)),
-            keybindHint: null
+            keybindHint: 'P'
           }),
           isActive: ({ query }) =>
             query.period === QueryPeriod.month &&
@@ -385,6 +420,19 @@ export const getDatePeriodGroups = ({
           isActive: ({ query }) =>
             query.period === QueryPeriod.year && isThisYear(site, query.date),
           onEvent
+        }
+      ],
+      [
+        ['Last 6 months', 'S'],
+        {
+          hidden: true,
+          search: (s) => ({
+            ...s,
+            ...clearedDateSearch,
+            period: QueryPeriod['6mo'],
+            keybindHint: 'S'
+          }),
+          isActive: ({ query }) => query.period === QueryPeriod['6mo']
         }
       ],
       [
@@ -424,31 +472,21 @@ export const getDatePeriodGroups = ({
     .concat(extraGroups)
 }
 
-export const last6MonthsLinkItem: LinkItem = [
-  ['Last 6 months', 'S'],
-  {
-    search: (s) => ({
-      ...s,
-      ...clearedDateSearch,
-      period: QueryPeriod['6mo'],
-      keybindHint: 'S'
-    }),
-    isActive: ({ query }) => query.period === QueryPeriod['6mo']
-  }
-]
-
 export const getCompareLinkItem = ({
   query,
-  site
+  site,
+  onEvent
 }: {
   query: DashboardQuery
   site: PlausibleSite
+  onEvent: () => void
 }): LinkItem => [
   [
     isComparisonEnabled(query.comparison) ? 'Disable comparison' : 'Compare',
     'X'
   ],
   {
+    onEvent,
     search: getSearchToToggleComparison({ site, query }),
     isActive: () => false
   }
@@ -499,29 +537,35 @@ export function getSavedTimePreferencesFromStorage({
 }
 
 export function getDashboardTimeSettings({
+  site,
   searchValues,
   storedValues,
-  defaultValues
+  defaultValues,
+  segmentIsExpanded
 }: {
+  site: PlausibleSite
   searchValues: Record<'period' | 'comparison' | 'match_day_of_week', unknown>
   storedValues: ReturnType<typeof getSavedTimePreferencesFromStorage>
   defaultValues: Pick<
     DashboardQuery,
     'period' | 'comparison' | 'match_day_of_week'
   >
+  segmentIsExpanded: boolean
 }): Pick<DashboardQuery, 'period' | 'comparison' | 'match_day_of_week'> {
   let period: QueryPeriod
   if (isValidPeriod(searchValues.period)) {
     period = searchValues.period
+  } else if (isValidPeriod(storedValues.period)) {
+    period = storedValues.period
+  } else if (isTodayOrYesterday(site.nativeStatsBegin)) {
+    period = QueryPeriod.day
   } else {
-    period = isValidPeriod(storedValues.period)
-      ? storedValues.period
-      : defaultValues.period
+    period = defaultValues.period
   }
 
   let comparison: ComparisonMode | null
 
-  if ([QueryPeriod.realtime, QueryPeriod.all].includes(period)) {
+  if (isComparisonForbidden({ period, segmentIsExpanded })) {
     comparison = null
   } else {
     comparison = isValidComparison(searchValues.comparison)
@@ -564,8 +608,14 @@ export function getCurrentPeriodDisplayName({
   if (query.period === '7d') {
     return 'Last 7 days'
   }
+  if (query.period === '28d') {
+    return 'Last 28 days'
+  }
   if (query.period === '30d') {
     return 'Last 30 days'
+  }
+  if (query.period === '91d') {
+    return 'Last 91 days'
   }
   if (query.period === 'month') {
     if (isThisMonth(site, query.date)) {

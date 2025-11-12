@@ -18,7 +18,7 @@ defmodule PlausibleWeb.Live.Components.Form do
   <.input name="my-input" errors={["oh no!"]} />
   """
 
-  @default_input_class "text-sm text-gray-900 dark:text-white dark:bg-gray-900 block pl-3.5 py-2.5 border-gray-300 dark:border-gray-500 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 rounded-md"
+  @default_input_class "text-sm text-gray-900 dark:text-white dark:bg-gray-750 block pl-3.5 py-2.5 border-gray-300 dark:border-gray-800 transition-all duration-150 focus:outline-none focus:ring-3 focus:ring-indigo-500/20 dark:focus:ring-indigo-500/25 focus:border-indigo-500 rounded-md disabled:bg-gray-100 disabled:dark:bg-gray-800 disabled:border-gray-200 disabled:dark:border-gray-800 disabled:text-gray-900/40 disabled:dark:text-white/30 disabled:cursor-not-allowed"
 
   attr(:id, :any, default: nil)
   attr(:name, :any)
@@ -52,6 +52,7 @@ defmodule PlausibleWeb.Live.Components.Form do
 
   attr(:mt?, :boolean, default: true)
   attr(:max_one_error, :boolean, default: false)
+  slot(:help_content)
   slot(:inner_block)
 
   def input(%{field: %Phoenix.HTML.FormField{} = field} = assigns) do
@@ -73,8 +74,8 @@ defmodule PlausibleWeb.Live.Components.Form do
 
   def input(%{type: "select"} = assigns) do
     ~H"""
-    <div class={@mt? && "mt-2"}>
-      <.label for={@id} class="mb-2">{@label}</.label>
+    <div class={@mt? && "mt-4"}>
+      <.label for={@id} class={if @help_text, do: "mb-0.5", else: "mb-1.5"}>{@label}</.label>
 
       <p :if={@help_text} class="text-gray-500 dark:text-gray-400 mb-2 text-sm">
         {@help_text}
@@ -89,19 +90,76 @@ defmodule PlausibleWeb.Live.Components.Form do
   end
 
   def input(%{type: "checkbox"} = assigns) do
+    assigns =
+      assign_new(assigns, :checked, fn ->
+        Phoenix.HTML.Form.normalize_value("checkbox", assigns[:value])
+      end)
+
     ~H"""
     <div class={[
-      "flex flex-inline items-center sm:justify-start justify-center gap-x-2",
       @mt? && "mt-2"
     ]}>
+      <.label
+        for={@id}
+        class="font-normal gap-x-2 flex flex-inline items-center sm:justify-start justify-center "
+      >
+        <input type="hidden" name={@name} value="false" disabled={@rest[:disabled]} />
+        <input
+          type="checkbox"
+          value="true"
+          checked={@checked}
+          id={@id}
+          name={@name}
+          class="block size-5 rounded-sm dark:bg-gray-600 border-gray-300 dark:border-gray-600 text-indigo-600"
+          {@rest}
+        />
+        {@label}
+      </.label>
+    </div>
+    """
+  end
+
+  def input(%{type: "radio"} = assigns) do
+    ~H"""
+    <div class={[
+      "flex flex-inline justify-start gap-x-3"
+    ]}>
       <input
-        type="checkbox"
-        value={@value || "true"}
+        type="radio"
+        value={@value}
         id={@id}
         name={@name}
-        class="block h-5 w-5 rounded dark:bg-gray-700 border-gray-300 text-indigo-600 focus:ring-indigo-600"
+        checked={assigns[:checked]}
+        class="block dark:bg-gray-900 size-4.5 mt-px cursor-pointer text-indigo-600 border-gray-400 dark:border-gray-600 checked:border-indigo-600 dark:checked:border-white"
+        {@rest}
       />
-      <.label for={@id}>{@label}</.label>
+      <.label :if={@label} class="flex flex-col flex-inline" for={@id}>
+        <span>{@label}</span>
+
+        <span
+          :if={@help_text || @help_content != []}
+          class="text-gray-500 dark:text-gray-400 mb-2 text-sm"
+        >
+          {@help_text}
+          {render_slot(@help_content)}
+        </span>
+      </.label>
+    </div>
+    """
+  end
+
+  def input(%{type: "textarea"} = assigns) do
+    ~H"""
+    <div class={@mt? && "mt-4"}>
+      <.label class="mb-1.5" for={@id}>{@label}</.label>
+      <textarea
+        id={@id}
+        rows={@rest[:rows] || "6"}
+        name={@name}
+        class="block w-full textarea border-1 border-gray-300 rounded-md p-4 text-sm text-gray-700 dark:border-gray-500 dark:bg-gray-900 dark:text-gray-300"
+        {@rest}
+      >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
+      <.error :for={msg <- @errors}>{msg}</.error>
     </div>
     """
   end
@@ -118,8 +176,12 @@ defmodule PlausibleWeb.Live.Components.Form do
     assigns = assign(assigns, :errors, errors)
 
     ~H"""
-    <div class={@mt? && "mt-2"}>
-      <.label :if={@label != nil and @label != ""} for={@id} class="mb-2">
+    <div class={@mt? && "mt-4"}>
+      <.label
+        :if={@label != nil and @label != ""}
+        for={@id}
+        class={if @help_text, do: "mb-0.5", else: "mb-1.5"}
+      >
         {@label}
       </.label>
       <p :if={@help_text} class="text-gray-500 dark:text-gray-400 mb-2 text-sm">
@@ -172,9 +234,9 @@ defmodule PlausibleWeb.Live.Components.Form do
         <a
           onclick={"var input = document.getElementById('#{@id}'); input.focus(); input.select(); document.execCommand('copy'); event.stopPropagation();"}
           href="javascript:void(0)"
-          class="absolute flex items-center text-xs font-medium text-indigo-600 no-underline hover:underline top-3 right-4"
+          class="absolute flex items-center text-xs font-medium text-indigo-600 dark:text-indigo-500 no-underline hover:text-indigo-700 dark:hover:text-indigo-400 top-3 right-4 transition-colors duration-150"
         >
-          <Heroicons.document_duplicate class="pr-1 text-indigo-600 dark:text-indigo-500 w-5 h-5" />
+          <Heroicons.document_duplicate class="mr-1 size-4" />
           <span>
             COPY
           </span>
@@ -368,26 +430,13 @@ defmodule PlausibleWeb.Live.Components.Form do
   attr :selected_fn, :any, required: true
 
   def mobile_nav_dropdown(%{options: options} = assigns) do
-    options =
-      Enum.reduce(options, Map.new(), fn
-        {section, opts}, acc when is_list(opts) ->
-          Map.put(acc, section, for(o <- opts, do: {o.key, o.value}))
-
-        {key, value}, _acc when is_binary(key) and is_binary(value) ->
-          options
-      end)
-
-    assigns = assign(assigns, :options, options)
+    assigns = assign(assigns, :options, flatten_options(options))
 
     ~H"""
-    <.form for={@conn} class="lg:hidden">
+    <.form for={@conn} class="lg:hidden py-4" data-testid="mobile-nav-dropdown">
       <.input
         value={
           @options
-          |> Enum.flat_map(fn
-            {_section, opts} when is_list(opts) -> opts
-            {k, v} when is_binary(k) and is_binary(v) -> [{k, v}]
-          end)
           |> Enum.find_value(fn {_k, v} ->
             apply(@selected_fn, [v]) && v
           end)
@@ -396,9 +445,29 @@ defmodule PlausibleWeb.Live.Components.Form do
         type="select"
         options={@options}
         onchange={"if (event.target.value) { location.href = '#{@href_base}' + event.target.value }"}
-        class="dark:bg-gray-800 mt-1 block w-full pl-3.5 pr-10 py-2.5 text-base border-gray-300 dark:border-gray-500 outline-none focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 rounded-md dark:text-gray-100"
+        class="dark:bg-gray-800 mt-1 block w-full pl-3.5 pr-10 py-2.5 text-base border-gray-300 dark:border-gray-500 outline-hidden focus:outline-hidden focus:ring-indigo-500 focus:border-indigo-500 rounded-md dark:text-gray-100"
       />
     </.form>
     """
+  end
+
+  defp flatten_options(options, prefix \\ "") do
+    options
+    |> Enum.map(fn
+      {key, suboptions} when is_list(suboptions) ->
+        flatten_options(suboptions, prefix <> key <> ": ")
+
+      {key, value} when is_binary(value) ->
+        {prefix <> key, value}
+
+      %{value: value, key: key} when is_binary(value) ->
+        {prefix <> key, value}
+
+      %{value: submenu_items, key: parent_key} when is_list(submenu_items) ->
+        Enum.map(submenu_items, fn submenu_item ->
+          {"#{prefix}#{parent_key}: #{submenu_item.key}", submenu_item.value}
+        end)
+    end)
+    |> List.flatten()
   end
 end

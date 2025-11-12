@@ -29,13 +29,12 @@ defmodule Plausible.Workers.ExportAnalytics do
       "site_id" => site_id
     } = args
 
-    current_user_id = args["current_user_id"]
-
     site = Plausible.Repo.get!(Plausible.Site, site_id)
+    true = Plausible.Sites.regular?(site)
     %Date.Range{} = date_range = Exports.date_range(site.id, site.timezone)
 
     queries =
-      Exports.export_queries(site_id, current_user_id,
+      Exports.export_queries(site,
         date_range: date_range,
         timezone: site.timezone,
         extname: ".csv"
@@ -80,7 +79,7 @@ defmodule Plausible.Workers.ExportAnalytics do
       ch,
       fn conn ->
         conn
-        |> Exports.stream_archive(queries, format: "CSVWithNames")
+        |> Exports.stream_archive(queries, format: "CSVWithNames", timeout: :infinity)
         |> Plausible.S3.export_upload_multipart(s3_bucket, s3_path, filename)
       end,
       timeout: :infinity

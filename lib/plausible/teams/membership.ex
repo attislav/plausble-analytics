@@ -7,9 +7,11 @@ defmodule Plausible.Teams.Membership do
 
   import Ecto.Changeset
 
-  @roles [:guest, :viewer, :editor, :admin, :owner]
+  @roles [:guest, :viewer, :editor, :admin, :owner, :billing]
 
   @type t() :: %__MODULE__{}
+
+  @type role() :: unquote(Enum.reduce(@roles, &{:|, [], [&1, &2]}))
 
   schema "team_memberships" do
     field :role, Ecto.Enum, values: @roles

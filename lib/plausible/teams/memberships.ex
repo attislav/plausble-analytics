@@ -7,13 +7,23 @@ defmodule Plausible.Teams.Memberships do
   alias Plausible.Repo
   alias Plausible.Teams
 
-  def all(team) do
+  @spec all(Teams.Team.t(), Keyword.t()) :: [Teams.Membership.t()]
+  def all(team, opts \\ []) do
+    exclude_guests? = Keyword.get(opts, :exclude_guests?, false)
+
     query =
       from tm in Teams.Membership,
         inner_join: u in assoc(tm, :user),
         where: tm.team_id == ^team.id,
         order_by: [asc: u.id],
         preload: [user: u]
+
+    query =
+      if exclude_guests? do
+        from tm in query, where: tm.role != :guest
+      else
+        query
+      end
 
     Repo.all(query)
   end
@@ -31,6 +41,8 @@ defmodule Plausible.Teams.Memberships do
     )
   end
 
+  @spec team_role(Teams.Team.t(), Auth.User.t()) ::
+          {:ok, Teams.Membership.role()} | {:error, :not_a_member}
   def team_role(team, user) do
     result =
       from(u in Auth.User,
@@ -46,25 +58,25 @@ defmodule Plausible.Teams.Memberships do
     end
   end
 
+  @spec can_add_site?(Teams.Team.t(), Auth.User.t()) :: boolean()
   def can_add_site?(team, user) do
-    case team_role(team, user) do
-      {:ok, role} when role in [:owner, :admin, :editor] ->
-        true
+    user_type = Plausible.Users.type(user)
 
-      _ ->
-        false
+    role =
+      case team_role(team, user) do
+        {:ok, role} -> role
+        {:error, _} -> :not_a_member
+      end
+
+    case {user_type, role, team} do
+      {:sso, :owner, %{setup_complete: false}} -> false
+      {_, role, _} when role in [:owner, :admin, :editor] -> true
+      _ -> false
     end
   end
 
-  def can_transfer_site?(team, user) do
-    case team_role(team, user) do
-      {:ok, role} when role in [:owner, :admin] ->
-        true
-
-      _ ->
-        false
-    end
-  end
+  @spec site_role(Plausible.Site.t(), Auth.User.t() | nil) ::
+          {:ok, {:team_member | :guest_member, Teams.Membership.role()}} | {:error, :not_a_member}
 
   def site_role(_site, nil), do: {:error, :not_a_member}
 
@@ -80,12 +92,13 @@ defmodule Plausible.Teams.Memberships do
       |> Repo.one()
 
     case result do
-      {:guest, role} -> {:ok, role}
-      {role, _} -> {:ok, role}
+      {:guest, role} -> {:ok, {:guest_member, role}}
+      {role, _} -> {:ok, {:team_member, role}}
       _ -> {:error, :not_a_member}
     end
   end
 
+  @spec site_member?(Plausible.Site.t(), Auth.User.t() | nil) :: boolean()
   def site_member?(site, user) do
     case site_role(site, user) do
       {:ok, _} -> true
@@ -93,9 +106,18 @@ defmodule Plausible.Teams.Memberships do
     end
   end
 
-  def has_admin_access?(site, user) do
+  @spec team_member?(Teams.Team.t(), Auth.User.t()) :: boolean()
+  def team_member?(team, user) do
+    case team_role(team, user) do
+      {:ok, _} -> true
+      _ -> false
+    end
+  end
+
+  @spec has_editor_access?(Plausible.Site.t(), Auth.User.t() | nil) :: boolean()
+  def has_editor_access?(site, user) do
     case site_role(site, user) do
-      {:ok, role} when role in [:editor, :admin, :owner] ->
+      {:ok, {_, role}} when role in [:editor, :admin, :owner] ->
         true
 
       _ ->
@@ -110,7 +132,7 @@ defmodule Plausible.Teams.Memberships do
       {:ok, guest_membership} ->
         can_grant_role? =
           if guest_membership.team_membership.user_id == current_user.id do
-            can_grant_role_to_self?(current_user_role, new_role)
+            false
           else
             can_grant_role_to_other?(current_user_role, new_role)
           end
@@ -138,8 +160,13 @@ defmodule Plausible.Teams.Memberships do
         guest_membership =
           Repo.preload(guest_membership, [:site, team_membership: [:team, :user]])
 
-        Repo.delete!(guest_membership)
-        prune_guests(guest_membership.team_membership.team)
+        {:ok, _} =
+          Repo.transaction(fn ->
+            Repo.delete!(guest_membership)
+            prune_guests(guest_membership.team_membership.team)
+            Plausible.Segments.after_user_removed_from_site(site, user)
+          end)
+
         send_site_member_removed_email(guest_membership)
 
       {:error, _} ->
@@ -147,14 +174,10 @@ defmodule Plausible.Teams.Memberships do
     end
   end
 
-  defp can_grant_role_to_self?(:editor, :viewer), do: true
-  defp can_grant_role_to_self?(_, _), do: false
-
   defp can_grant_role_to_other?(:owner, :editor), do: true
-  defp can_grant_role_to_other?(:owner, :admin), do: true
   defp can_grant_role_to_other?(:owner, :viewer), do: true
-  defp can_grant_role_to_other?(:editor, :editor), do: true
-  defp can_grant_role_to_other?(:editor, :viewer), do: true
+  defp can_grant_role_to_other?(:admin, :editor), do: true
+  defp can_grant_role_to_other?(:admin, :viewer), do: true
   defp can_grant_role_to_other?(_, _), do: false
 
   defp send_site_member_removed_email(guest_membership) do

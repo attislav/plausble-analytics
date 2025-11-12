@@ -1,5 +1,6 @@
 defmodule Plausible.TestUtils do
   use Plausible.Repo
+  use Plausible
   alias Plausible.Factory
 
   defmacro __using__(_) do
@@ -34,6 +35,13 @@ defmodule Plausible.TestUtils do
     end
   end
 
+  def setup_do(context \\ %{}, step_fn) do
+    case step_fn.(context) do
+      {:ok, ctx} -> Map.merge(context, Map.new(ctx))
+      ctx -> Map.merge(context, Map.new(ctx))
+    end
+  end
+
   def create_user(_) do
     {:ok, user: Plausible.Teams.Test.new_user()}
   end
@@ -47,13 +55,15 @@ defmodule Plausible.TestUtils do
     {:ok, team: team}
   end
 
-  def setup_team(%{team: team}) do
-    team =
-      team
-      |> Plausible.Teams.Team.setup_changeset()
-      |> Repo.update!()
+  def setup_team(%{conn: conn, team: team}) do
+    team = Plausible.Teams.complete_setup(team)
 
-    {:ok, team: team}
+    conn =
+      conn
+      |> Plug.Conn.fetch_session()
+      |> Plug.Conn.put_session(:current_team_id, team.identifier)
+
+    {:ok, conn: conn, team: team}
   end
 
   def create_legacy_site_import(%{site: site}) do
@@ -65,7 +75,7 @@ defmodule Plausible.TestUtils do
       Factory.insert(:site_import,
         site: site,
         start_date: ~D[2005-01-01],
-        end_date: Timex.today(),
+        end_date: Date.utc_today(),
         source: :universal_analytics,
         legacy: opts[:create_legacy_import?] == true
       )
@@ -73,13 +83,9 @@ defmodule Plausible.TestUtils do
     {:ok, site_import: site_import}
   end
 
-  def set_scroll_depth_visible_at(%{site: site}) do
-    Plausible.Sites.set_scroll_depth_visible_at(site)
-    :ok
-  end
-
   def create_api_key(%{user: user}) do
-    api_key = Factory.insert(:api_key, user: user)
+    team = Plausible.Teams.Test.team_of(user)
+    api_key = Factory.insert(:api_key, user: user, team: team)
 
     {:ok, api_key: api_key.key}
   end
@@ -88,23 +94,6 @@ defmodule Plausible.TestUtils do
     conn = Plug.Conn.put_req_header(conn, "authorization", "Bearer #{api_key}")
 
     {:ok, conn: conn}
-  end
-
-  def create_pageviews(pageviews) do
-    pageviews =
-      Enum.map(pageviews, fn pageview ->
-        pageview =
-          pageview
-          |> Map.delete(:site)
-          |> Map.put(:site_id, pageview.site.id)
-
-        Factory.build(:pageview, pageview)
-        |> Map.from_struct()
-        |> Map.drop([:__meta__, :acquisition_channel])
-        |> update_in([:timestamp], &to_naive_truncate/1)
-      end)
-
-    Plausible.IngestRepo.insert_all(Plausible.ClickhouseEventV2, pageviews)
   end
 
   def log_in(%{user: user, conn: conn}) do
@@ -117,6 +106,27 @@ defmodule Plausible.TestUtils do
       |> init_session()
 
     {:ok, conn: conn}
+  end
+
+  on_ee do
+    alias Plausible.Auth.SSO
+
+    def setup_sso(%{team: team} = ctx) do
+      team = Plausible.Teams.complete_setup(team)
+      integration = SSO.initiate_saml_integration(team)
+
+      {:ok, sso_domain} = SSO.Domains.add(integration, ctx[:domain] || "example.com")
+      _sso_domain = SSO.Domains.verify(sso_domain, skip_checks?: true)
+
+      {:ok, team: team, sso_integration: integration, sso_domain: sso_domain}
+    end
+
+    def provision_sso_user(%{user: user, sso_integration: integration}) do
+      identity = new_identity(user.name, user.email, integration)
+      {:ok, _, _, sso_user} = SSO.provision_user(identity)
+
+      {:ok, user: sso_user}
+    end
   end
 
   def init_session(conn) do
@@ -191,7 +201,10 @@ defmodule Plausible.TestUtils do
 
   defp populate_native_stats(events) do
     for event_params <- events do
-      {:ok, session} = Plausible.Session.CacheStore.on_event(event_params, event_params, nil)
+      {:ok, session} =
+        Plausible.Session.CacheStore.on_event(event_params, event_params, nil,
+          skip_balancer?: true
+        )
 
       event_params
       |> Plausible.ClickhouseEventV2.merge_session(session)
@@ -209,7 +222,7 @@ defmodule Plausible.TestUtils do
 
   def relative_time(shifts) do
     NaiveDateTime.utc_now()
-    |> Timex.shift(shifts)
+    |> NaiveDateTime.shift(shifts)
     |> NaiveDateTime.truncate(:second)
   end
 
@@ -252,6 +265,10 @@ defmodule Plausible.TestUtils do
 
   def random_ip() do
     Enum.map_join(1..4, ".", fn _ -> Enum.random(1..254) end)
+  end
+
+  def htmlize_quotes(string) do
+    String.replace(string, "'", "&#39;")
   end
 
   def minio_running? do
@@ -302,9 +319,59 @@ defmodule Plausible.TestUtils do
     end
   end
 
+  def monthly_pageview_usage_stub(penultimate_usage, last_usage) do
+    last_bill_date = Date.utc_today() |> Date.shift(day: -1)
+
+    Plausible.Teams.Billing
+    |> Double.stub(:monthly_pageview_usage, fn _user ->
+      %{
+        last_cycle: %{
+          date_range:
+            Date.range(
+              Date.shift(last_bill_date, month: -1),
+              Date.shift(last_bill_date, day: -1)
+            ),
+          total: last_usage
+        },
+        penultimate_cycle: %{
+          date_range:
+            Date.range(
+              Date.shift(last_bill_date, month: -2),
+              Date.shift(last_bill_date, day: -1, month: -1)
+            ),
+          total: penultimate_usage
+        }
+      }
+    end)
+  end
+
   defp secret_key_base() do
     :plausible
     |> Application.fetch_env!(PlausibleWeb.Endpoint)
     |> Keyword.fetch!(:secret_key_base)
+  end
+
+  # normal `@tag :tmp_dir` might not work in Plausible.Session.Transfer tests
+  # if the path is too long for unix domain sockets (>104)
+  # this one makes paths a bit shorter
+  def tmp_dir do
+    name = "plausible-#{System.unique_integer([:positive])}"
+    tmp_dir = Path.join(System.tmp_dir!(), name)
+    File.rm_rf!(tmp_dir)
+    File.mkdir_p!(tmp_dir)
+    ExUnit.Callbacks.on_exit(fn -> File.rm_rf!(tmp_dir) end)
+    tmp_dir
+  end
+
+  on_ee do
+    def new_identity(name, email, integration, id \\ Ecto.UUID.generate()) do
+      %Plausible.Auth.SSO.Identity{
+        id: id,
+        integration_id: integration.identifier,
+        name: name,
+        email: email,
+        expires_at: NaiveDateTime.add(NaiveDateTime.utc_now(:second), 6, :hour)
+      }
+    end
   end
 end

@@ -21,20 +21,35 @@ defmodule PlausibleWeb.Live.TeamSetupTest do
 
     test "redirects to /team/general if team is already set up", %{conn: conn, user: user} do
       {:ok, team} = Teams.get_or_create(user)
-      team |> Teams.Team.setup_changeset() |> Repo.update!()
+      Teams.complete_setup(team)
+      conn = set_current_team(conn, team)
       assert {:error, {:redirect, %{to: "/settings/team/general"}}} = live(conn, @url)
-    end
-
-    test "does not redirect to /team/general if dev mode", %{conn: conn, user: user} do
-      {:ok, team} = Teams.get_or_create(user)
-      team |> Teams.Team.setup_changeset() |> Repo.update!()
-      assert {:ok, lv, _} = live(conn, @url <> "?dev=1")
-      _ = render(lv)
     end
   end
 
   describe "/team/setup - main differences from team management" do
     setup [:create_user, :log_in, :create_team]
+
+    test "renames the team on first render", %{conn: conn, team: team} do
+      assert team.name == "My Personal Sites"
+      {:ok, _lv, html} = live(conn, @url)
+
+      assert text_of_attr(html, ~s|input#update-team-form_name[name="team[name]"]|, "value") ==
+               "Jane Smith's Team"
+
+      assert Repo.reload!(team).name == "Jane Smith's Team"
+    end
+
+    test "renames even if team already has non-default name", %{conn: conn, team: team} do
+      assert team.name == "My Personal Sites"
+      Repo.update!(Teams.Team.name_changeset(team, %{name: "Foo"}))
+      {:ok, _lv, html} = live(conn, @url)
+
+      assert text_of_attr(html, ~s|input#update-team-form_name[name="team[name]"]|, "value") ==
+               "Jane Smith's Team"
+
+      assert Repo.reload!(team).name == "Jane Smith's Team"
+    end
 
     test "renders form", %{conn: conn} do
       {:ok, lv, html} = live(conn, @url)
@@ -50,6 +65,38 @@ defmodule PlausibleWeb.Live.TeamSetupTest do
       assert Repo.reload!(team).name == "New Team Name"
 
       _ = render(lv)
+    end
+
+    test "setting team name to 'My Personal Sites' is reserved", %{
+      conn: conn,
+      team: team,
+      user: user
+    } do
+      {:ok, lv, html} = live(conn, @url)
+
+      assert text_of_attr(html, ~s|input#update-team-form_name[name="team[name]"]|, "value") ==
+               "#{user.name}'s Team"
+
+      type_into_input(lv, "team[name]", "Team Name 1")
+      _ = render(lv)
+      type_into_input(lv, "team[name]", "My Personal Sites")
+      _ = render(lv)
+      assert Repo.reload!(team).name == "Team Name 1"
+    end
+
+    @tag :ee_only
+    test "blurs UI with an upgrade CTA if the subscription team member limit is 0", %{
+      conn: conn,
+      user: user
+    } do
+      subscribe_to_starter_plan(user)
+
+      {:ok, _lv, html} = live(conn, @url)
+
+      assert class_of_element(html, "#feature-gate-inner-block-container") =~
+               "pointer-events-none"
+
+      assert class_of_element(html, "#feature-gate-overlay") =~ "backdrop-blur-[6px]"
     end
   end
 
@@ -70,7 +117,7 @@ defmodule PlausibleWeb.Live.TeamSetupTest do
       member_row1 = find(html, "#{member_el()}:nth-of-type(1)") |> text()
       assert member_row1 =~ "new@example.com"
       assert member_row1 =~ "Invited User"
-      assert member_row1 =~ "Invitation Pending"
+      assert member_row1 =~ "Invitation pending"
 
       member_row2 = find(html, "#{member_el()}:nth-of-type(2)") |> text()
       assert member_row2 =~ "#{user.name}"
@@ -78,7 +125,9 @@ defmodule PlausibleWeb.Live.TeamSetupTest do
 
       save_layout(lv)
 
-      assert_redirect(lv, "/settings/team/general")
+      assert_redirect(lv, "/settings/team/general?__team=" <> team.identifier)
+
+      team = Repo.reload!(team)
 
       assert_email_delivered_with(
         to: [nil: "new@example.com"],
@@ -101,6 +150,8 @@ defmodule PlausibleWeb.Live.TeamSetupTest do
       assert text_of_element(html, "#{member_el()}:nth-of-type(1) button") == "Viewer"
 
       save_layout(lv)
+
+      team = Repo.reload!(team)
 
       assert_email_delivered_with(
         to: [nil: "new@example.com"],
@@ -127,40 +178,63 @@ defmodule PlausibleWeb.Live.TeamSetupTest do
       assert_team_membership(member2, team, :viewer)
     end
 
-    test "allows updating guest membership so it moves sections", %{
-      conn: conn,
-      user: user
-    } do
+    test "allows updating guest membership so it moves sections and sends out promotion e-mail",
+         %{
+           conn: conn,
+           user: user,
+           team: team
+         } do
       site = new_site(owner: user)
       add_guest(site, role: :viewer, user: new_user(name: "Mr Guest", email: "guest@example.com"))
 
+      {:ok, main_lv, _html} = live(conn, @url)
       lv = get_child_lv(conn)
+
+      type_into_input(main_lv, "team[name]", "A-Team!")
+
+      assert Repo.reload!(team).name == "A-Team!"
 
       html = render(lv)
 
-      assert length(find(html, member_el())) == 1
+      assert elem_count(html, member_el()) == 1
 
       assert text_of_element(html, "#{guest_el()}:first-of-type button") == "Guest"
 
       change_role(lv, 1, "viewer", guest_el())
       html = render(lv)
 
-      assert length(find(html, member_el())) == 2
+      assert elem_count(html, member_el()) == 2
       refute element_exists?(html, "#guest-list")
+
+      save_layout(lv)
+
+      assert_email_delivered_with(
+        to: [nil: "guest@example.com"],
+        subject: @subject_prefix <> "Welcome to \"A-Team!\" team"
+      )
     end
 
-    test "fails to save layout with limits breached", %{conn: conn} do
+    @tag :ee_only
+    test "fails to save layout with limits breached", %{conn: conn, team: team} do
+      insert(:growth_subscription, team: team)
+
       lv = get_child_lv(conn)
+      html = render(lv)
+      refute attr_defined?(html, ~s|#team-layout-form input[name="input-email"]|, "readonly")
+      refute attr_defined?(html, ~s|#invite-member|, "disabled")
+
       add_invite(lv, "new1@example.com", "admin")
       add_invite(lv, "new2@example.com", "admin")
       add_invite(lv, "new3@example.com", "admin")
       add_invite(lv, "new4@example.com", "admin")
 
-      refute lv |> render() |> text() =~ "Your account is limited to 3 team members"
+      html = render(lv)
 
-      save_layout(lv)
+      assert attr_defined?(html, ~s|#team-layout-form input[name="input-email"]|, "readonly")
+      assert attr_defined?(html, ~s|#invite-member|, "disabled")
 
-      assert lv |> render() |> text() =~ "Your account is limited to 3 team members"
+      assert text_of_element(html, ~s/[data-test="limit-exceeded-notice"]/) =~
+               "This account is limited to 3 members"
     end
 
     test "all options are disabled for the sole owner", %{conn: conn} do
@@ -189,8 +263,8 @@ defmodule PlausibleWeb.Live.TeamSetupTest do
 
       html = lv |> render()
 
-      assert [_ | _] = find(html, "#{member_el()}:nth-of-type(1) a")
-      assert find(html, "#{member_el()}:nth-of-type(2) a") == []
+      assert element_exists?(html, "#{member_el()}:nth-of-type(1) a")
+      refute element_exists?(html, "#{member_el()}:nth-of-type(2) a")
     end
 
     test "allows removing any type of entry", %{
@@ -214,8 +288,8 @@ defmodule PlausibleWeb.Live.TeamSetupTest do
 
       html = render(lv)
 
-      assert html |> find(member_el()) |> Enum.count() == 4
-      assert html |> find(guest_el()) |> Enum.count() == 1
+      assert elem_count(html, member_el()) == 4
+      assert elem_count(html, guest_el()) == 1
 
       pending = find(html, "#{member_el()}:nth-of-type(1)") |> text()
       sent = find(html, "#{member_el()}:nth-of-type(2)") |> text()
@@ -224,10 +298,10 @@ defmodule PlausibleWeb.Live.TeamSetupTest do
 
       guest_member = find(html, "#{guest_el()}:first-of-type") |> text()
 
-      assert pending =~ "Invitation Pending"
-      assert sent =~ "Invitation Sent"
+      assert pending =~ "Invitation pending"
+      assert sent =~ "Invitation sent"
       assert owner =~ "You"
-      assert admin =~ "Team Member"
+      assert admin != ""
       assert guest_member =~ "Guest"
 
       remove_member(lv, 1)
@@ -241,12 +315,14 @@ defmodule PlausibleWeb.Live.TeamSetupTest do
 
       html = render(lv) |> text()
 
-      refute html =~ "Invitation Pending"
-      refute html =~ "Invitation Sent"
-      refute html =~ "Team Member"
+      refute html =~ "Invitation pending"
+      refute html =~ "Invitation sent"
+      refute html =~ "Team member"
       refute html =~ "Guest"
 
       save_layout(lv)
+
+      team = Repo.reload!(team)
 
       assert_email_delivered_with(
         to: [nil: guest.email],
@@ -275,7 +351,6 @@ defmodule PlausibleWeb.Live.TeamSetupTest do
 
       html = render(lv)
 
-      assert find(html, "#{member_el()}:nth-of-type(1)") |> text() =~ "Team Member"
       assert find(html, "#{member_el()}:nth-of-type(2)") |> text() =~ "You"
 
       save_layout(lv)

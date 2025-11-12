@@ -122,7 +122,13 @@ defmodule Plausible.Billing.PaddleApi do
   def fetch_prices([_ | _] = product_ids, customer_ip) do
     params = %{product_ids: Enum.join(product_ids, ","), customer_ip: customer_ip}
 
-    case HTTPClient.impl().get(prices_url(), @headers, params) do
+    prices_final_url =
+      prices_url()
+      |> URI.parse()
+      |> Map.replace(:query, URI.encode_query(params))
+      |> URI.to_string()
+
+    case HTTPClient.impl().get(prices_final_url, @headers, nil) do
       {:ok, %{body: %{"success" => true, "response" => %{"products" => products}}}} ->
         products =
           Enum.into(products, %{}, fn %{
@@ -149,7 +155,7 @@ defmodule Plausible.Billing.PaddleApi do
   end
 
   def checkout_domain() do
-    if Application.get_env(:plausible, :environment) in ["dev", "staging"] do
+    if Application.get_env(:plausible, :environment) == "staging" do
       "https://sandbox-checkout.paddle.com"
     else
       "https://checkout.paddle.com"
@@ -157,7 +163,7 @@ defmodule Plausible.Billing.PaddleApi do
   end
 
   def vendors_domain() do
-    if Application.get_env(:plausible, :environment) in ["dev", "staging"] do
+    if Application.get_env(:plausible, :environment) == "staging" do
       "https://sandbox-vendors.paddle.com"
     else
       "https://vendors.paddle.com"

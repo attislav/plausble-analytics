@@ -2,6 +2,7 @@
   <.tile
     docs="goal-conversions"
     feature_mod={Plausible.Billing.Feature.Goals}
+    feature_toggle?={true}
     site={@site}
     conn={@conn}
   >
@@ -12,10 +13,10 @@
       <p>
         Define actions that you want your users to take, like visiting a certain page, submitting a form, etc.
       </p>
-      <p :if={ee?()}>
+      <p :if={ee?() and Plausible.Sites.regular?(@site)} data-test-id="setup-funnels-cta">
         You can also
         <.styled_link href={Routes.site_path(@conn, :settings_funnels, @site.domain)}>
-          compose Goals into Funnels
+          compose goals into funnels.
         </.styled_link>
       </p>
     </:subtitle>

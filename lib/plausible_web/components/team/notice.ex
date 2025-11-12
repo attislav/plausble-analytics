@@ -4,12 +4,37 @@ defmodule PlausibleWeb.Team.Notice do
   """
   use PlausibleWeb, :component
 
-  def inviting_banner(assigns) do
+  def owner_cta_banner(assigns) do
     ~H"""
     <aside class="mt-4 mb-4">
-      <.notice title="Inviting people to your team" class="shadow-md dark:shadow-none mt-4">
+      <.notice
+        title="A Better Way of Inviting People to Your Team"
+        class="shadow-md dark:shadow-none mt-4"
+      >
         <p>
-          You can also invite people to your team and give them different roles like admin, editor, viewer or billing. Team members can have full access to all sites.
+          You can also create a team and assign different roles to team members, such as admin,
+          editor, viewer or billing. Team members will gain access to all your sites. <.styled_link href={
+            Routes.team_setup_path(PlausibleWeb.Endpoint, :setup)
+          }>
+            Create your team here
+          </.styled_link>.
+        </p>
+      </.notice>
+    </aside>
+    """
+  end
+
+  def guest_cta_banner(assigns) do
+    ~H"""
+    <aside class="mt-4 mb-4">
+      <.notice
+        title="A Better Way of Inviting People to a Team"
+        class="shadow-md dark:shadow-none mt-4"
+      >
+        <p>
+          It is also possible to create a team and assign different roles to team members, such as
+          admin, editor, viewer or billing. Team members can gain access to all the sites. Please
+          contact the site owner to create your team.
         </p>
       </.notice>
     </aside>
@@ -19,7 +44,7 @@ defmodule PlausibleWeb.Team.Notice do
   def team_members_notice(assigns) do
     ~H"""
     <aside class="mt-4 mb-4">
-      <.notice theme={:gray} class="rounded border border-gray-300 text-sm mt-4">
+      <.notice theme={:gray} class="mt-4">
         <p>
           Team members automatically have access to this site.
           <.styled_link href={Routes.settings_path(PlausibleWeb.Endpoint, :team_general)}>

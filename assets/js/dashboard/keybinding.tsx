@@ -1,9 +1,9 @@
-/* @format */
 import React, { ReactNode, RefObject, useCallback, useEffect } from 'react'
 import {
   AppNavigationTarget,
   useAppNavigate
 } from './navigation/use-app-navigate'
+import classNames from 'classnames'
 
 /**
  * Returns whether a keydown or keyup event should be ignored or not.
@@ -135,39 +135,21 @@ export function NavigateKeybind({
   )
 }
 
-export function KeybindHint({ children }: { children: ReactNode }) {
-  return (
-    <kbd className="rounded border border-gray-200 dark:border-gray-600 px-2 font-mono font-normal text-xs text-gray-400">
-      {children}
-    </kbd>
-  )
-}
-
-/**
- * Rendering this component captures the Escape key on targetRef.current,
- * blurring the element on Escape, and stopping the event from propagating.
- * Needed to prevent other Escape handlers that may exist from running.
- */
-export function BlurMenuButtonOnEscape({
-  targetRef: targetRef
+export function KeybindHint({
+  children,
+  className
 }: {
-  targetRef: RefObject<HTMLElement>
+  children: ReactNode
+  className?: string
 }) {
   return (
-    <Keybind
-      keyboardKey="Escape"
-      type="keyup"
-      handler={(event) => {
-        const t = event.target as HTMLElement | null
-        if (typeof t?.blur === 'function') {
-          if (t === targetRef.current) {
-            t.blur()
-            event.stopPropagation()
-          }
-        }
-      }}
-      targetRef={targetRef}
-      shouldIgnoreWhen={[isModifierPressed, isTyping]}
-    />
+    <kbd
+      className={classNames(
+        'rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 px-1.5 font-medium text-xs text-gray-400',
+        className
+      )}
+    >
+      {children}
+    </kbd>
   )
 }

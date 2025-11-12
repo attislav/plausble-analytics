@@ -1,5 +1,3 @@
-/** @format */
-
 import React from 'react'
 import {
   render,
@@ -12,33 +10,21 @@ import userEvent from '@testing-library/user-event'
 import { TestContextProviders } from '../../../test-utils/app-context-providers'
 import { TopBar } from './top-bar'
 import { MockAPI } from '../../../test-utils/mock-api'
+import {
+  mockAnimationsApi,
+  mockResizeObserver,
+  mockIntersectionObserver
+} from 'jsdom-testing-mocks'
 
-const flags = {
-  saved_segments: true
-}
+mockAnimationsApi()
+mockResizeObserver()
+mockIntersectionObserver()
+
 const domain = 'dummy.site'
-const domains = [domain, 'example.com', 'blog.example.com']
 
 let mockAPI: MockAPI
 
 beforeAll(() => {
-  global.IntersectionObserver = jest.fn(
-    () =>
-      ({
-        observe: jest.fn(),
-        unobserve: jest.fn(),
-        disconnect: jest.fn()
-      }) as unknown as IntersectionObserver
-  )
-  global.ResizeObserver = jest.fn(
-    () =>
-      ({
-        observe: jest.fn(),
-        unobserve: jest.fn(),
-        disconnect: jest.fn()
-      }) as unknown as ResizeObserver
-  )
-
   mockAPI = new MockAPI().start()
 })
 
@@ -48,39 +34,55 @@ afterAll(() => {
 
 beforeEach(() => {
   mockAPI.clear()
-  mockAPI.get('/api/sites', { data: domains.map((domain) => ({ domain })) })
+  mockAPI.get('/api/sites', { data: [{ domain }] })
 })
 
 test('user can open and close site switcher', async () => {
+  mockAPI.get('/api/sites', {
+    data: [domain, 'example.com', 'blog.example.com', 'aççented.ca'].map(
+      (domain) => ({
+        domain
+      })
+    )
+  })
+
   render(<TopBar showCurrentVisitors={false} />, {
     wrapper: (props) => (
-      <TestContextProviders siteOptions={{ domain, flags }} {...props} />
+      <TestContextProviders siteOptions={{ domain }} {...props} />
     )
   })
 
   const toggleSiteSwitcher = screen.getByRole('button', { name: domain })
   await userEvent.click(toggleSiteSwitcher)
-  expect(screen.queryAllByRole('link').map((el) => el.textContent)).toEqual(
+  expect(
+    screen
+      .queryAllByRole('link')
+      .map((el) => ({ text: el.textContent, href: el.getAttribute('href') }))
+  ).toEqual(
     [
-      ['example.com', '2'],
-      ['blog.example.com', '3']
-    ].map((a) => a.join(''))
+      { text: ['Back to sites'], href: '/sites' },
+      { text: ['Site settings'], href: `/${domain}/settings/general` },
+      { text: ['dummy.site', '1'], href: '#' },
+      { text: ['example.com', '2'], href: `/example.com` },
+      { text: ['blog.example.com', '3'], href: `/blog.example.com` },
+      { text: ['aççented.ca', '4'], href: `/a%C3%A7%C3%A7ented.ca` }
+    ].map((l) => ({ ...l, text: l.text.join('') }))
   )
-  expect(screen.queryAllByRole('menuitem').map((el) => el.textContent)).toEqual(
-    ['Site Settings', 'View All']
-  )
+
+  expect(screen.queryByTestId('sitemenu')).toBeInTheDocument()
   await userEvent.click(toggleSiteSwitcher)
+  expect(screen.queryByTestId('sitemenu')).not.toBeInTheDocument()
   expect(screen.queryAllByRole('menuitem')).toEqual([])
 })
 
 test('user can open and close filters dropdown', async () => {
   render(<TopBar showCurrentVisitors={false} />, {
     wrapper: (props) => (
-      <TestContextProviders siteOptions={{ domain, flags }} {...props} />
+      <TestContextProviders siteOptions={{ domain }} {...props} />
     )
   })
 
-  const toggleFilters = screen.getByRole('button', { name: /Add filter/ })
+  const toggleFilters = screen.getByRole('button', { name: 'Filter' })
   await userEvent.click(toggleFilters)
   expect(screen.queryAllByRole('link').map((el) => el.textContent)).toEqual([
     'Page',
@@ -94,14 +96,15 @@ test('user can open and close filters dropdown', async () => {
     'Goal'
   ])
   await userEvent.click(toggleFilters)
-  expect(screen.queryAllByRole('menuitem')).toEqual([])
+  expect(screen.queryByTestId('filtermenu')).not.toBeInTheDocument()
+  expect(screen.queryAllByRole('link')).toEqual([])
 })
 
 test('current visitors renders when visitors are present and disappears after visitors are null', async () => {
-  mockAPI.get(`/api/stats/${domain}/current-visitors?`, 500)
+  mockAPI.get(`/api/stats/${domain}/current-visitors`, 500)
   render(<TopBar showCurrentVisitors={true} />, {
     wrapper: (props) => (
-      <TestContextProviders siteOptions={{ domain, flags }} {...props} />
+      <TestContextProviders siteOptions={{ domain }} {...props} />
     )
   })
 
@@ -111,7 +114,7 @@ test('current visitors renders when visitors are present and disappears after vi
     ).toBeVisible()
   })
 
-  mockAPI.get(`/api/stats/${domain}/current-visitors?`, null)
+  mockAPI.get(`/api/stats/${domain}/current-visitors`, null)
   fireEvent(document, new CustomEvent('tick'))
   await waitForElementToBeRemoved(() =>
     screen.queryByRole('link', { name: /current visitors/ })

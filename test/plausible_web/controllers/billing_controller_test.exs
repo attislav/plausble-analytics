@@ -69,8 +69,8 @@ defmodule PlausibleWeb.BillingControllerTest do
       site = new_site(owner: user)
       now = NaiveDateTime.utc_now()
 
-      generate_usage_for(site, 11_000, Timex.shift(now, days: -5))
-      generate_usage_for(site, 11_000, Timex.shift(now, days: -35))
+      generate_usage_for(site, 11_000, NaiveDateTime.shift(now, day: -5))
+      generate_usage_for(site, 11_000, NaiveDateTime.shift(now, day: -35))
 
       conn1 = post(conn, Routes.billing_path(conn, :change_plan, @v4_growth_plan))
 
@@ -108,7 +108,7 @@ defmodule PlausibleWeb.BillingControllerTest do
   end
 
   describe "GET /billing/upgrade-success" do
-    setup [:create_user, :log_in]
+    setup [:create_user, :create_team, :log_in]
 
     test "shows success page after user subscribes", %{conn: conn} do
       conn = get(conn, Routes.billing_path(conn, :upgrade_success))
@@ -146,7 +146,7 @@ defmodule PlausibleWeb.BillingControllerTest do
       assert doc =~ ~r/Up to\s*<b>\s*50M\s*<\/b>\s*monthly pageviews/
       assert doc =~ ~r/Up to\s*<b>\s*20k\s*<\/b>\s*sites/
       assert doc =~ ~r/Up to\s*<b>\s*5k\s*<\/b>\s*hourly api requests/
-      assert doc =~ ~r/The plan is priced at\s*<b>\s*€10\s*<\/b>\s*/
+      assert doc =~ ~r/The plan is priced at\s*<b>\s*€123\s*<\/b>\s*/
       assert doc =~ "per year"
     end
 
@@ -162,7 +162,7 @@ defmodule PlausibleWeb.BillingControllerTest do
       assert %{
                "disableLogout" => true,
                "email" => user.email,
-               "passthrough" => "ee:#{Plausible.ee?()};user:#{user.id};team:#{team.id}",
+               "passthrough" => "ee:#{ee?()};user:#{user.id};team:#{team.id}",
                "product" => @configured_enterprise_plan_paddle_plan_id,
                "success" => Routes.billing_path(PlausibleWeb.Endpoint, :upgrade_success),
                "theme" => "none"
@@ -197,7 +197,7 @@ defmodule PlausibleWeb.BillingControllerTest do
       assert doc =~ ~r/Up to\s*<b>\s*50M\s*<\/b>\s*monthly pageviews/
       assert doc =~ ~r/Up to\s*<b>\s*20k\s*<\/b>\s*sites/
       assert doc =~ ~r/Up to\s*<b>\s*5k\s*<\/b>\s*hourly api requests/
-      assert doc =~ ~r/The plan is priced at\s*<b>\s*€10\s*<\/b>\s*/
+      assert doc =~ ~r/The plan is priced at\s*<b>\s*€123\s*<\/b>\s*/
       assert doc =~ "per year"
     end
 
@@ -265,7 +265,9 @@ defmodule PlausibleWeb.BillingControllerTest do
 
       assert doc =~ "Looking to adjust your plan?"
       assert doc =~ "You're currently on a custom plan."
-      assert Floki.text(doc) =~ "please contact us at hello@plausible.io"
+
+      assert LazyHTML.text(LazyHTML.from_document(doc)) =~
+               "please contact us at hello@plausible.io"
     end
   end
 
@@ -321,7 +323,7 @@ defmodule PlausibleWeb.BillingControllerTest do
       assert doc =~ ~r/Up to\s*<b>\s*50M\s*<\/b>\s*monthly pageviews/
       assert doc =~ ~r/Up to\s*<b>\s*20k\s*<\/b>\s*sites/
       assert doc =~ ~r/Up to\s*<b>\s*5k\s*<\/b>\s*hourly api requests/
-      assert doc =~ ~r/The plan is priced at\s*<b>\s*€10\s*<\/b>\s*/
+      assert doc =~ ~r/The plan is priced at\s*<b>\s*€123\s*<\/b>\s*/
       assert doc =~ "per year"
     end
 
@@ -337,7 +339,7 @@ defmodule PlausibleWeb.BillingControllerTest do
       assert %{
                "disableLogout" => true,
                "email" => user.email,
-               "passthrough" => "ee:#{Plausible.ee?()};user:#{user.id};team:#{team.id}",
+               "passthrough" => "ee:#{ee?()};user:#{user.id};team:#{team.id}",
                "product" => @configured_enterprise_plan_paddle_plan_id,
                "success" => Routes.billing_path(PlausibleWeb.Endpoint, :upgrade_success),
                "theme" => "none"

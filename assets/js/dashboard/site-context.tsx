@@ -1,4 +1,3 @@
-/** @format */
 import React, { createContext, ReactNode, useContext } from 'react'
 
 export function parseSiteFromDataset(dataset: DOMStringMap): PlausibleSite {
@@ -7,9 +6,9 @@ export function parseSiteFromDataset(dataset: DOMStringMap): PlausibleSite {
     offset: parseInt(dataset.offset!, 10),
     hasGoals: dataset.hasGoals === 'true',
     hasProps: dataset.hasProps === 'true',
-    scrollDepthVisible: dataset.scrollDepthVisible === 'true',
     funnelsAvailable: dataset.funnelsAvailable === 'true',
     propsAvailable: dataset.propsAvailable === 'true',
+    siteSegmentsAvailable: dataset.siteSegmentsAvailable === 'true',
     conversionsOptedOut: dataset.conversionsOptedOut === 'true',
     funnelsOptedOut: dataset.funnelsOptedOut === 'true',
     propsOptedOut: dataset.propsOptedOut === 'true',
@@ -22,24 +21,23 @@ export function parseSiteFromDataset(dataset: DOMStringMap): PlausibleSite {
     isDbip: dataset.isDbip === 'true',
     flags: JSON.parse(dataset.flags!),
     validIntervalsByPeriod: JSON.parse(dataset.validIntervalsByPeriod!),
-    shared: !!dataset.sharedLinkAuth
+    shared: !!dataset.sharedLinkAuth,
+    isConsolidatedView: dataset.isConsolidatedView === 'true'
   }
 }
 
-type FeatureFlags = {
-  channels?: boolean
-  saved_segments?: boolean
-}
+// Update this object when new feature flags are added to the frontend.
+type FeatureFlags = Record<never, boolean>
 
-const siteContextDefaultValue = {
+export const siteContextDefaultValue = {
   domain: '',
   /** offset in seconds from UTC at site load time, @example 7200 */
   offset: 0,
   hasGoals: false,
   hasProps: false,
-  scrollDepthVisible: false,
   funnelsAvailable: false,
   propsAvailable: false,
+  siteSegmentsAvailable: false,
   conversionsOptedOut: false,
   funnelsOptedOut: false,
   propsOptedOut: false,
@@ -54,7 +52,8 @@ const siteContextDefaultValue = {
   isDbip: false,
   flags: {} as FeatureFlags,
   validIntervalsByPeriod: {} as Record<string, Array<string>>,
-  shared: false
+  shared: false,
+  isConsolidatedView: false
 }
 
 export type PlausibleSite = typeof siteContextDefaultValue

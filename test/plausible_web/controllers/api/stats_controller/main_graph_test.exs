@@ -9,7 +9,7 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
 
     test "displays pageviews for the last 30 minutes in realtime graph", %{conn: conn, site: site} do
       populate_stats(site, [
-        build(:pageview, timestamp: relative_time(minutes: -5))
+        build(:pageview, timestamp: relative_time(minute: -5))
       ])
 
       conn = get(conn, "/api/stats/#{site.domain}/main-graph?period=realtime&metric=pageviews")
@@ -29,7 +29,7 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       |> Plausible.Repo.update()
 
       populate_stats(site, [
-        build(:pageview, timestamp: relative_time(minutes: -5))
+        build(:pageview, timestamp: relative_time(minute: -5))
       ])
 
       conn = get(conn, "/api/stats/#{site.domain}/main-graph?period=realtime&metric=pageviews")
@@ -147,6 +147,46 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       assert Enum.sum(plot) == 2
     end
 
+    test "displays visitors for last 28d", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, timestamp: ~N[2021-01-01 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-28 00:00:00])
+      ])
+
+      conn =
+        get(
+          conn,
+          "/api/stats/#{site.domain}/main-graph?period=28d&date=2021-01-29&metric=visitors"
+        )
+
+      assert %{"plot" => plot} = json_response(conn, 200)
+
+      assert Enum.count(plot) == 28
+      assert List.first(plot) == 1
+      assert List.last(plot) == 1
+      assert Enum.sum(plot) == 2
+    end
+
+    test "displays visitors for last 91d", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, timestamp: ~N[2021-01-16 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-04-16 00:00:00])
+      ])
+
+      conn =
+        get(
+          conn,
+          "/api/stats/#{site.domain}/main-graph?period=91d&date=2021-04-17&metric=visitors"
+        )
+
+      assert %{"plot" => plot} = json_response(conn, 200)
+
+      assert Enum.count(plot) == 91
+      assert List.first(plot) == 1
+      assert List.last(plot) == 1
+      assert Enum.sum(plot) == 2
+    end
+
     test "displays visitors for a month with imported data", %{conn: conn, site: site} do
       populate_stats(site, [
         build(:pageview, timestamp: ~N[2021-01-01 00:00:00]),
@@ -215,10 +255,10 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
 
     test "displays visitors for 6 months with imported data", %{conn: conn, site: site} do
       populate_stats(site, [
-        build(:pageview, timestamp: ~N[2021-01-01 00:00:00]),
-        build(:pageview, timestamp: ~N[2021-06-30 00:00:00]),
-        build(:imported_visitors, date: ~D[2021-01-01]),
-        build(:imported_visitors, date: ~D[2021-06-30])
+        build(:pageview, timestamp: ~N[2020-12-01 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-05-31 00:00:00]),
+        build(:imported_visitors, date: ~D[2020-12-01]),
+        build(:imported_visitors, date: ~D[2021-05-31])
       ])
 
       conn =
@@ -237,8 +277,8 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
 
     test "displays visitors for 6 months with only imported data", %{conn: conn, site: site} do
       populate_stats(site, [
-        build(:imported_visitors, date: ~D[2021-01-01]),
-        build(:imported_visitors, date: ~D[2021-06-30])
+        build(:imported_visitors, date: ~D[2020-12-01]),
+        build(:imported_visitors, date: ~D[2021-05-31])
       ])
 
       conn =
@@ -257,10 +297,10 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
 
     test "displays visitors for 12 months with imported data", %{conn: conn, site: site} do
       populate_stats(site, [
-        build(:pageview, timestamp: ~N[2021-01-01 00:00:00]),
-        build(:pageview, timestamp: ~N[2021-12-31 00:00:00]),
-        build(:imported_visitors, date: ~D[2021-01-01]),
-        build(:imported_visitors, date: ~D[2021-12-31])
+        build(:pageview, timestamp: ~N[2020-12-01 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-11-30 00:00:00]),
+        build(:imported_visitors, date: ~D[2020-12-01]),
+        build(:imported_visitors, date: ~D[2021-11-30])
       ])
 
       conn =
@@ -279,8 +319,8 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
 
     test "displays visitors for 12 months with only imported data", %{conn: conn, site: site} do
       populate_stats(site, [
-        build(:imported_visitors, date: ~D[2021-01-01]),
-        build(:imported_visitors, date: ~D[2021-12-31])
+        build(:imported_visitors, date: ~D[2020-12-01]),
+        build(:imported_visitors, date: ~D[2021-11-30])
       ])
 
       conn =
@@ -372,8 +412,8 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       conn = get(conn, "/api/stats/#{site.domain}/main-graph?period=30d&metric=visitors")
       assert %{"labels" => labels} = json_response(conn, 200)
 
-      {:ok, first} = Timex.today() |> Timex.shift(days: -30) |> Timex.format("{ISOdate}")
-      {:ok, last} = Timex.today() |> Timex.format("{ISOdate}")
+      first = Date.utc_today() |> Date.shift(day: -30) |> Date.to_iso8601()
+      last = Date.utc_today() |> Date.shift(day: -1) |> Date.to_iso8601()
       assert List.first(labels) == first
       assert List.last(labels) == last
     end
@@ -382,8 +422,8 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       conn = get(conn, "/api/stats/#{site.domain}/main-graph?period=7d&metric=visitors")
       assert %{"labels" => labels} = json_response(conn, 200)
 
-      {:ok, first} = Timex.today() |> Timex.shift(days: -6) |> Timex.format("{ISOdate}")
-      {:ok, last} = Timex.today() |> Timex.format("{ISOdate}")
+      first = Date.utc_today() |> Date.shift(day: -7) |> Date.to_iso8601()
+      last = Date.utc_today() |> Date.shift(day: -1) |> Date.to_iso8601()
       assert List.first(labels) == first
       assert List.last(labels) == last
     end
@@ -486,12 +526,12 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       site: site
     } do
       populate_stats(site, [
-        build(:pageview, timestamp: relative_time(minutes: -35), user_id: 1),
-        build(:pageview, timestamp: relative_time(minutes: -20), user_id: 1),
-        build(:pageview, timestamp: relative_time(minutes: -25), user_id: 2),
-        build(:pageview, timestamp: relative_time(minutes: -15), user_id: 2),
-        build(:pageview, timestamp: relative_time(minutes: -5), user_id: 3),
-        build(:pageview, timestamp: relative_time(minutes: -3), user_id: 3)
+        build(:pageview, timestamp: relative_time(minute: -35), user_id: 1),
+        build(:pageview, timestamp: relative_time(minute: -20), user_id: 1),
+        build(:pageview, timestamp: relative_time(minute: -25), user_id: 2),
+        build(:pageview, timestamp: relative_time(minute: -15), user_id: 2),
+        build(:pageview, timestamp: relative_time(minute: -5), user_id: 3),
+        build(:pageview, timestamp: relative_time(minute: -3), user_id: 3)
       ])
 
       conn =
@@ -553,7 +593,7 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       conn =
         get(
           conn,
-          "/api/stats/#{site.domain}/main-graph?period=7d&date=2021-01-07&metric=visitors&interval=day"
+          "/api/stats/#{site.domain}/main-graph?period=7d&date=2021-01-08&metric=visitors&interval=day"
         )
 
       assert %{"plot" => plot} = json_response(conn, 200)
@@ -626,12 +666,12 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       conn =
         get(
           conn,
-          "/api/stats/#{site.domain}/main-graph?period=7d&date=2020-01-07&metric=scroll_depth&filters=#{filters}"
+          "/api/stats/#{site.domain}/main-graph?period=7d&date=2020-01-08&metric=scroll_depth&filters=#{filters}"
         )
 
       assert %{"plot" => plot} = json_response(conn, 200)
 
-      assert plot == [40, 20, 0, 0, 0, 0, 0]
+      assert plot == [40, 20, nil, nil, nil, nil, nil]
     end
 
     test "returns scroll depth per day with imported data", %{conn: conn, site: site} do
@@ -671,12 +711,12 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       conn =
         get(
           conn,
-          "/api/stats/#{site.domain}/main-graph?period=7d&date=2020-01-07&metric=scroll_depth&filters=#{filters}&with_imported=true"
+          "/api/stats/#{site.domain}/main-graph?period=7d&date=2020-01-08&metric=scroll_depth&filters=#{filters}&with_imported=true"
         )
 
       assert %{"plot" => plot} = json_response(conn, 200)
 
-      assert plot == [40, 30, 90, 0, 0, 0, 0]
+      assert plot == [40, 30, 90, nil, nil, nil, nil]
     end
   end
 
@@ -719,7 +759,7 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       assert %{"plot" => plot} = json_response(conn, 200)
       assert Enum.count(plot) == 31
 
-      assert List.first(plot) == 33.3
+      assert List.first(plot) == 33.33
       assert Enum.at(plot, 10) == 0.0
       assert List.last(plot) == 50.0
     end
@@ -808,14 +848,14 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       insert(:goal, site: site, event_name: "Signup")
 
       populate_stats(site, [
-        build(:event, name: "Different", timestamp: ~N[2020-01-10 00:00:00]),
+        build(:event, name: "Different", timestamp: ~N[2019-12-10 00:00:00]),
+        build(:event, name: "Signup", timestamp: ~N[2020-01-10 00:00:00]),
         build(:event, name: "Signup", timestamp: ~N[2020-02-10 00:00:00]),
         build(:event, name: "Signup", timestamp: ~N[2020-03-10 00:00:00]),
-        build(:event, name: "Signup", timestamp: ~N[2020-04-10 00:00:00]),
-        build(:pageview, timestamp: ~N[2021-05-10 00:00:00]),
-        build(:event, name: "Signup", timestamp: ~N[2021-06-11 04:00:00]),
-        build(:event, name: "Signup", timestamp: ~N[2021-07-11 00:00:00]),
-        build(:event, name: "Signup", timestamp: ~N[2021-08-11 00:00:00])
+        build(:pageview, timestamp: ~N[2021-04-10 00:00:00]),
+        build(:event, name: "Signup", timestamp: ~N[2021-05-11 04:00:00]),
+        build(:event, name: "Signup", timestamp: ~N[2021-06-11 00:00:00]),
+        build(:event, name: "Signup", timestamp: ~N[2021-07-11 00:00:00])
       ])
 
       filters = Jason.encode!([[:is, "event:goal", ["Signup"]]])
@@ -922,7 +962,7 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       assert %{"plot" => plot} = json_response(conn, 200)
 
       assert Enum.count(plot) == 31
-      assert List.first(plot) == 0
+      assert List.first(plot) == nil
       assert List.last(plot) == 300
     end
 
@@ -968,11 +1008,11 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
 
     test "displays visitors for 6mo on a day scale", %{conn: conn, site: site} do
       populate_stats(site, [
-        build(:pageview, timestamp: ~N[2021-01-01 00:00:00]),
+        build(:pageview, timestamp: ~N[2020-12-01 00:00:00]),
+        build(:pageview, timestamp: ~N[2020-12-15 00:00:00]),
+        build(:pageview, timestamp: ~N[2020-12-15 00:00:00]),
         build(:pageview, timestamp: ~N[2021-01-15 00:00:00]),
-        build(:pageview, timestamp: ~N[2021-01-15 00:00:00]),
-        build(:pageview, timestamp: ~N[2021-02-15 00:00:00]),
-        build(:pageview, timestamp: ~N[2021-06-30 01:00:00])
+        build(:pageview, timestamp: ~N[2021-05-31 01:00:00])
       ])
 
       conn =
@@ -983,7 +1023,7 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
 
       assert %{"plot" => plot} = json_response(conn, 200)
 
-      assert Enum.count(plot) == 181
+      assert Enum.count(plot) == 182
       assert List.first(plot) == 1
       assert Enum.at(plot, 14) == 2
       assert Enum.at(plot, 45) == 1
@@ -1135,10 +1175,11 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
              }
     end
 
-    test "shows perfect week-split range on week scale with full week indicators", %{
-      conn: conn,
-      site: site
-    } do
+    test "shows perfect week-split range on week scale with full week indicators for custom period",
+         %{
+           conn: conn,
+           site: site
+         } do
       conn =
         get(
           conn,
@@ -1168,7 +1209,52 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
              }
     end
 
-    test "shows imperfect month-split period on month scale with full month indicators", %{
+    test "shows imperfect week-split for last 28d with full week indicators", %{
+      conn: conn,
+      site: site
+    } do
+      conn =
+        get(
+          conn,
+          "/api/stats/#{site.domain}/main-graph?period=28d&metric=visitors&interval=week&date=2021-10-30"
+        )
+
+      assert %{"labels" => labels, "full_intervals" => full_intervals} = json_response(conn, 200)
+
+      assert labels == ["2021-10-02", "2021-10-04", "2021-10-11", "2021-10-18", "2021-10-25"]
+
+      assert full_intervals == %{
+               "2021-10-02" => false,
+               "2021-10-04" => true,
+               "2021-10-11" => true,
+               "2021-10-18" => true,
+               "2021-10-25" => false
+             }
+    end
+
+    test "shows perfect week-split for last 28d with full week indicators", %{
+      conn: conn,
+      site: site
+    } do
+      conn =
+        get(
+          conn,
+          "/api/stats/#{site.domain}/main-graph?period=28d&date=2021-02-08&metric=visitors&interval=week"
+        )
+
+      assert %{"labels" => labels, "full_intervals" => full_intervals} = json_response(conn, 200)
+
+      assert labels == ["2021-01-11", "2021-01-18", "2021-01-25", "2021-02-01"]
+
+      assert full_intervals == %{
+               "2021-01-11" => true,
+               "2021-01-18" => true,
+               "2021-01-25" => true,
+               "2021-02-01" => true
+             }
+    end
+
+    test "shows imperfect month-split for custom period with full month indicators", %{
       conn: conn,
       site: site
     } do
@@ -1187,6 +1273,49 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
                "2021-10-01" => true,
                "2021-11-01" => true,
                "2021-12-01" => false
+             }
+    end
+
+    test "shows imperfect month-split for last 91d with full month indicators", %{
+      conn: conn,
+      site: site
+    } do
+      conn =
+        get(
+          conn,
+          "/api/stats/#{site.domain}/main-graph?period=91d&metric=visitors&interval=month&date=2021-12-13"
+        )
+
+      assert %{"labels" => labels, "full_intervals" => full_intervals} = json_response(conn, 200)
+
+      assert labels == ["2021-09-01", "2021-10-01", "2021-11-01", "2021-12-01"]
+
+      assert full_intervals == %{
+               "2021-09-01" => false,
+               "2021-10-01" => true,
+               "2021-11-01" => true,
+               "2021-12-01" => false
+             }
+    end
+
+    test "shows perfect month-split for last 91d with full month indicators", %{
+      conn: conn,
+      site: site
+    } do
+      conn =
+        get(
+          conn,
+          "/api/stats/#{site.domain}/main-graph?period=91d&metric=visitors&interval=month&date=2021-12-01"
+        )
+
+      assert %{"labels" => labels, "full_intervals" => full_intervals} = json_response(conn, 200)
+
+      assert labels == ["2021-09-01", "2021-10-01", "2021-11-01"]
+
+      assert full_intervals == %{
+               "2021-09-01" => true,
+               "2021-10-01" => true,
+               "2021-11-01" => true
              }
     end
 
@@ -1211,6 +1340,95 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
 
       assert Enum.at(plot, Enum.find_index(labels, &(&1 == "2023-03-01 12:00:00"))) == 1
     end
+
+    test "trims hourly relative date range", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, timestamp: ~N[2021-01-08 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-08 06:05:00]),
+        build(:pageview, timestamp: ~N[2021-01-08 08:59:00]),
+        build(:pageview, timestamp: ~N[2021-01-08 23:59:00])
+      ])
+
+      Plausible.Stats.Query.Test.fix_now(~U[2021-01-08 08:05:00Z])
+
+      conn =
+        get(
+          conn,
+          "/api/stats/#{site.domain}/main-graph?period=day&metric=visitors&date=2021-01-08&interval=hour"
+        )
+
+      assert_matches %{
+                       "labels" => [
+                         "2021-01-08 00:00:00",
+                         "2021-01-08 01:00:00",
+                         "2021-01-08 02:00:00",
+                         "2021-01-08 03:00:00",
+                         "2021-01-08 04:00:00",
+                         "2021-01-08 05:00:00",
+                         "2021-01-08 06:00:00",
+                         "2021-01-08 07:00:00",
+                         "2021-01-08 08:00:00"
+                       ],
+                       "plot" => [1, 0, 0, 0, 0, 0, 1, 0, 1]
+                     } = json_response(conn, 200)
+    end
+
+    test "trims monthly relative date range", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, timestamp: ~N[2021-01-01 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-05 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-07 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-31 00:00:00])
+      ])
+
+      Plausible.Stats.Query.Test.fix_now(~U[2021-01-07 12:00:00Z])
+
+      conn =
+        get(
+          conn,
+          "/api/stats/#{site.domain}/main-graph?period=month&metric=visitors&date=2021-01-07&interval=day"
+        )
+
+      assert_matches %{
+                       "labels" => [
+                         "2021-01-01",
+                         "2021-01-02",
+                         "2021-01-03",
+                         "2021-01-04",
+                         "2021-01-05",
+                         "2021-01-06",
+                         "2021-01-07"
+                       ],
+                       "plot" => [1, 0, 0, 0, 1, 0, 1]
+                     } = json_response(conn, 200)
+    end
+
+    test "trims yearly relative date range", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, timestamp: ~N[2021-01-01 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-05 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-30 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-31 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-02-01 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-02-09 00:00:00])
+      ])
+
+      Plausible.Stats.Query.Test.fix_now(~U[2021-02-07 12:00:00Z])
+
+      conn =
+        get(
+          conn,
+          "/api/stats/#{site.domain}/main-graph?period=year&metric=visitors&date=2021-02-07&interval=month"
+        )
+
+      assert_matches %{
+                       "labels" => [
+                         "2021-01-01",
+                         "2021-02-01"
+                       ],
+                       "plot" => [4, 1]
+                     } = json_response(conn, 200)
+    end
   end
 
   describe "GET /api/stats/main-graph - comparisons" do
@@ -1226,14 +1444,14 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       assert %{"labels" => labels, "comparison_labels" => comparison_labels} =
                json_response(conn, 200)
 
-      {:ok, first} = Timex.today() |> Timex.shift(days: -30) |> Timex.format("{ISOdate}")
-      {:ok, last} = Timex.today() |> Timex.format("{ISOdate}")
+      first = Date.utc_today() |> Date.shift(day: -30) |> Date.to_iso8601()
+      last = Date.utc_today() |> Date.shift(day: -1) |> Date.to_iso8601()
 
       assert List.first(labels) == first
       assert List.last(labels) == last
 
-      {:ok, first} = Timex.today() |> Timex.shift(days: -61) |> Timex.format("{ISOdate}")
-      {:ok, last} = Timex.today() |> Timex.shift(days: -31) |> Timex.format("{ISOdate}")
+      first = Date.utc_today() |> Date.shift(day: -60) |> Date.to_iso8601()
+      last = Date.utc_today() |> Date.shift(day: -31) |> Date.to_iso8601()
 
       assert List.first(comparison_labels) == first
       assert List.last(comparison_labels) == last
@@ -1318,22 +1536,6 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       assert 2 == Enum.sum(comparison_plot)
     end
 
-    test "bugfix: don't crash when timezone gap occurs", %{conn: conn, user: user} do
-      site = new_site(owner: user, timezone: "America/Santiago")
-
-      populate_stats(site, [
-        build(:pageview, timestamp: relative_time(minutes: -5))
-      ])
-
-      conn =
-        get(
-          conn,
-          "/api/stats/#{site.domain}/main-graph?period=custom&from=2022-09-11&to=2022-09-21&date=2023-03-15&with_imported=true"
-        )
-
-      assert %{"plot" => _} = json_response(conn, 200)
-    end
-
     test "does not return imported data when with_imported is set to false when comparing", %{
       conn: conn,
       site: site
@@ -1375,14 +1577,112 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       conn =
         get(
           conn,
-          "/api/stats/#{site.domain}/main-graph?period=7d&date=2021-01-14&comparison=previous_period&metric=conversion_rate&filters=#{filters}"
+          "/api/stats/#{site.domain}/main-graph?period=7d&date=2021-01-15&comparison=previous_period&metric=conversion_rate&filters=#{filters}"
         )
 
       assert %{"plot" => this_week_plot, "comparison_plot" => last_week_plot} =
                json_response(conn, 200)
 
       assert this_week_plot == [50.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-      assert last_week_plot == [33.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      assert last_week_plot == [33.33, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    end
+
+    test "does not trim hourly relative date range when comparing", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, timestamp: ~N[2021-01-08 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-08 06:05:00]),
+        build(:pageview, timestamp: ~N[2021-01-08 08:59:00]),
+        build(:pageview, timestamp: ~N[2021-01-08 23:59:00])
+      ])
+
+      Plausible.Stats.Query.Test.fix_now(~U[2021-01-08 08:05:00Z])
+
+      conn =
+        get(
+          conn,
+          "/api/stats/#{site.domain}/main-graph?period=day&metric=visitors&date=2021-01-08&interval=hour&comparison=previous_period"
+        )
+
+      assert_matches %{
+                       "labels" => [
+                         "2021-01-08 00:00:00",
+                         "2021-01-08 01:00:00",
+                         "2021-01-08 02:00:00",
+                         "2021-01-08 03:00:00",
+                         "2021-01-08 04:00:00",
+                         "2021-01-08 05:00:00",
+                         "2021-01-08 06:00:00",
+                         "2021-01-08 07:00:00",
+                         "2021-01-08 08:00:00",
+                         "2021-01-08 09:00:00",
+                         "2021-01-08 10:00:00",
+                         "2021-01-08 11:00:00",
+                         "2021-01-08 12:00:00",
+                         "2021-01-08 13:00:00",
+                         "2021-01-08 14:00:00",
+                         "2021-01-08 15:00:00",
+                         "2021-01-08 16:00:00",
+                         "2021-01-08 17:00:00",
+                         "2021-01-08 18:00:00",
+                         "2021-01-08 19:00:00",
+                         "2021-01-08 20:00:00",
+                         "2021-01-08 21:00:00",
+                         "2021-01-08 22:00:00",
+                         "2021-01-08 23:00:00"
+                       ],
+                       "plot" => [
+                         1,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         1,
+                         0,
+                         1,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         1
+                       ],
+                       "comparison_plot" => [
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0,
+                         0
+                       ]
+                     } = json_response(conn, 200)
     end
   end
 
@@ -1431,37 +1731,37 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       assert %{"plot" => plot} = json_response(conn, 200)
 
       assert plot == [
-               13.29,
-               0.0,
-               0.0,
-               0.0,
-               19.9,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               30.31
+               %{"currency" => "USD", "long" => "$13.29", "short" => "$13.3", "value" => 13.29},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$19.90", "short" => "$19.9", "value" => 19.9},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$30.31", "short" => "$30.3", "value" => 30.31}
              ]
     end
 
@@ -1511,13 +1811,30 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       conn =
         get(
           conn,
-          "/api/stats/#{site.domain}/main-graph?period=7d&date=2021-01-14&metric=total_revenue&filters=#{filters}&comparison=previous_period"
+          "/api/stats/#{site.domain}/main-graph?period=7d&date=2021-01-15&metric=total_revenue&filters=#{filters}&comparison=previous_period"
         )
 
       assert %{"plot" => plot, "comparison_plot" => prev} = json_response(conn, 200)
 
-      assert plot == [0.0, 0.0, 10.31, 0.0, 30.0, 0.0, 0.0]
-      assert prev == [13.29, 0.0, 0.0, 0.0, 19.9, 0.0, 0.0]
+      assert plot == [
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$10.31", "short" => "$10.3", "value" => 10.31},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$30.00", "short" => "$30.0", "value" => 30.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0}
+             ]
+
+      assert prev == [
+               %{"currency" => "USD", "long" => "$13.29", "short" => "$13.3", "value" => 13.29},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$19.90", "short" => "$19.9", "value" => 19.9},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0}
+             ]
     end
   end
 
@@ -1572,37 +1889,37 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       assert %{"plot" => plot} = json_response(conn, 200)
 
       assert plot == [
-               31.895,
-               0.0,
-               0.0,
-               0.0,
-               19.9,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               0.0,
-               15.155
+               %{"currency" => "USD", "long" => "$31.90", "short" => "$31.9", "value" => 31.895},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$19.90", "short" => "$19.9", "value" => 19.9},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$15.16", "short" => "$15.2", "value" => 15.155}
              ]
     end
 
@@ -1652,13 +1969,30 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       conn =
         get(
           conn,
-          "/api/stats/#{site.domain}/main-graph?period=7d&date=2021-01-14&metric=average_revenue&filters=#{filters}&comparison=previous_period"
+          "/api/stats/#{site.domain}/main-graph?period=7d&date=2021-01-15&metric=average_revenue&filters=#{filters}&comparison=previous_period"
         )
 
       assert %{"plot" => plot, "comparison_plot" => prev} = json_response(conn, 200)
 
-      assert plot == [0.0, 0.0, 10.31, 0.0, 15.0, 0.0, 0.0]
-      assert prev == [13.29, 0.0, 0.0, 0.0, 19.9, 0.0, 0.0]
+      assert plot == [
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$10.31", "short" => "$10.3", "value" => 10.31},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$15.00", "short" => "$15.0", "value" => 15.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0}
+             ]
+
+      assert prev == [
+               %{"currency" => "USD", "long" => "$13.29", "short" => "$13.3", "value" => 13.29},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$19.90", "short" => "$19.9", "value" => 19.9},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0},
+               %{"currency" => "USD", "long" => "$0.00", "short" => "$0.0", "value" => 0.0}
+             ]
     end
   end
 
@@ -1698,6 +2032,24 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
       assert %{"present_index" => present_index} = json_response(conn, 200)
 
       refute present_index
+    end
+
+    for period <- ["7d", "28d", "30d", "91d"] do
+      test "#{period} period does not include today", %{conn: conn, site: site} do
+        today = "2021-01-01"
+        yesterday = "2020-12-31"
+
+        conn =
+          get(
+            conn,
+            "/api/stats/#{site.domain}/main-graph?period=#{unquote(period)}&date=#{today}&metric=pageviews"
+          )
+
+        assert %{"labels" => labels, "present_index" => present_index} = json_response(conn, 200)
+
+        refute present_index
+        assert List.last(labels) == yesterday
+      end
     end
   end
 end

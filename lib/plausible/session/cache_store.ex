@@ -2,27 +2,43 @@ defmodule Plausible.Session.CacheStore do
   require Logger
   alias Plausible.Session.WriteBuffer
 
-  @lock_timeout 500
+  @lock_timeout 1000
 
   @lock_telemetry_event [:plausible, :sessions, :cache, :lock]
 
   def lock_telemetry_event, do: @lock_telemetry_event
 
-  def on_event(event, session_attributes, prev_user_id, buffer_insert \\ &WriteBuffer.insert/1) do
+  def on_event(event, session_attributes, prev_user_id, opts \\ []) do
+    buffer_insert = Keyword.get(opts, :buffer_insert, &WriteBuffer.insert/1)
+    skip_balancer? = Keyword.get(opts, :skip_balancer?, false)
     lock_requested_at = System.monotonic_time()
 
-    Plausible.Cache.Adapter.with_lock(
-      :sessions,
-      {event.site_id, event.user_id},
-      @lock_timeout,
-      fn ->
-        lock_duration = System.monotonic_time() - lock_requested_at
-        :telemetry.execute(@lock_telemetry_event, %{duration: lock_duration}, %{})
-        found_session = find_session(event, event.user_id) || find_session(event, prev_user_id)
+    try do
+      response =
+        Plausible.Session.Balancer.dispatch(
+          event.user_id,
+          fn ->
+            lock_duration = System.monotonic_time() - lock_requested_at
+            :telemetry.execute(@lock_telemetry_event, %{duration: lock_duration}, %{})
 
-        handle_event(event, found_session, session_attributes, buffer_insert)
+            found_session =
+              find_session(event, event.user_id) || find_session(event, prev_user_id)
+
+            handle_event(event, found_session, session_attributes, buffer_insert)
+          end,
+          timeout: @lock_timeout,
+          local?: skip_balancer?
+        )
+
+      case response do
+        {:error, e} -> raise e
+        _ -> {:ok, response}
       end
-    )
+    catch
+      :exit, {:timeout, _} ->
+        Sentry.capture_message("Timeout while handling session event")
+        {:error, :timeout}
+    end
   end
 
   defp handle_event(%{name: "engagement"} = event, found_session, _, _) do
@@ -77,26 +93,31 @@ defmodule Plausible.Session.CacheStore do
   end
 
   defp update_session(session, event) do
+    pageview? = event.name == "pageview"
+    pageviews = if(pageview?, do: session.pageviews + 1, else: session.pageviews)
+
     %{
       session
       | timestamp: event.timestamp,
         entry_page:
-          if(session.entry_page == "" and event.name == "pageview",
+          if(session.entry_page == "" and pageview?,
             do: event.pathname,
             else: session.entry_page
           ),
         hostname:
-          if(event.name == "pageview" and session.hostname == "",
+          if(pageview? and session.hostname == "",
             do: event.hostname,
             else: session.hostname
           ),
-        exit_page: if(event.name == "pageview", do: event.pathname, else: session.exit_page),
-        exit_page_hostname:
-          if(event.name == "pageview", do: event.hostname, else: session.exit_page_hostname),
-        is_bounce: false,
+        exit_page: if(pageview?, do: event.pathname, else: session.exit_page),
+        exit_page_hostname: if(pageview?, do: event.hostname, else: session.exit_page_hostname),
+        is_bounce:
+          if(session.is_bounce,
+            do: not (pageviews >= 2 or (event.interactive? and not pageview?)),
+            else: session.is_bounce
+          ),
         duration: NaiveDateTime.diff(event.timestamp, session.start) |> abs,
-        pageviews:
-          if(event.name == "pageview", do: session.pageviews + 1, else: session.pageviews),
+        pageviews: pageviews,
         events: session.events + 1
     }
   end
@@ -111,7 +132,7 @@ defmodule Plausible.Session.CacheStore do
       entry_page: if(event.name == "pageview", do: event.pathname, else: ""),
       exit_page: if(event.name == "pageview", do: event.pathname, else: ""),
       exit_page_hostname: if(event.name == "pageview", do: event.hostname, else: ""),
-      is_bounce: true,
+      is_bounce: event.name == "pageview" or not event.interactive?,
       duration: 0,
       pageviews: if(event.name == "pageview", do: 1, else: 0),
       events: 1,

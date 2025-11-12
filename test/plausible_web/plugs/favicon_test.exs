@@ -1,6 +1,6 @@
 defmodule PlausibleWeb.FaviconTest do
   use Plausible.DataCase, async: true
-  use Plug.Test
+  import Plug.Test
   alias PlausibleWeb.Favicon
 
   import Mox
@@ -38,11 +38,11 @@ defmodule PlausibleWeb.FaviconTest do
     assert conn.resp_body == "favicon response body"
   end
 
-  test "requests favicon from DDG when domain contains a forward slash", %{plug_opts: plug_opts} do
+  test "requests favicon from DDG by hostname only (strips pathname)", %{plug_opts: plug_opts} do
     expect(
       Plausible.HTTPClient.Mock,
       :get,
-      fn "https://icons.duckduckgo.com/ip3/site.com/subfolder.ico" ->
+      fn "https://icons.duckduckgo.com/ip3/site.com.ico" ->
         {:ok, %Finch.Response{status: 200, body: "favicon response body"}}
       end
     )
@@ -145,7 +145,7 @@ defmodule PlausibleWeb.FaviconTest do
   end
 
   describe "Fallback to placeholder icon" do
-    @placholder_icon File.read!("priv/placeholder_favicon.ico")
+    @placeholder_icon File.read!("priv/link_favicon.svg")
 
     test "falls back to placeholder when DDG returns a non-2xx response", %{plug_opts: plug_opts} do
       expect(
@@ -163,7 +163,7 @@ defmodule PlausibleWeb.FaviconTest do
 
       assert conn.halted
       assert conn.status == 200
-      assert conn.resp_body == @placholder_icon
+      assert conn.resp_body == @placeholder_icon
     end
 
     test "falls back to placeholder in case of a network error", %{plug_opts: plug_opts} do
@@ -181,7 +181,7 @@ defmodule PlausibleWeb.FaviconTest do
 
       assert conn.halted
       assert conn.status == 200
-      assert conn.resp_body == @placholder_icon
+      assert conn.resp_body == @placeholder_icon
     end
 
     test "falls back to placeholder when DDG returns a broken image response", %{
@@ -201,7 +201,7 @@ defmodule PlausibleWeb.FaviconTest do
 
       assert conn.halted
       assert conn.status == 200
-      assert conn.resp_body == @placholder_icon
+      assert conn.resp_body == @placeholder_icon
     end
   end
 end

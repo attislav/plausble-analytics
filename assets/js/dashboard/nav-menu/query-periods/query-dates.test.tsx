@@ -1,5 +1,3 @@
-/** @format */
-
 import React from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -8,11 +6,15 @@ import { stringifySearch } from '../../util/url-search-params'
 import { useNavigate } from 'react-router-dom'
 import { getRouterBasepath } from '../../router'
 import { QueryPeriodsPicker } from './query-periods-picker'
+import { mockAnimationsApi, mockResizeObserver } from 'jsdom-testing-mocks'
+
+mockAnimationsApi()
+mockResizeObserver()
 
 const domain = 'picking-query-dates.test'
 const periodStorageKey = `period__${domain}`
 
-test('if no period is stored, loads with default value of "Last 30 days", all expected options are present', async () => {
+test('if no period is stored, loads with default value of "Last 28 days", all expected options are present', async () => {
   expect(localStorage.getItem(periodStorageKey)).toBe(null)
   render(<QueryPeriodsPicker />, {
     wrapper: (props) => (
@@ -20,7 +22,7 @@ test('if no period is stored, loads with default value of "Last 30 days", all ex
     )
   })
 
-  await userEvent.click(screen.getByText('Last 30 days'))
+  await userEvent.click(screen.getByText('Last 28 days'))
 
   expect(screen.getByTestId('datemenu')).toBeVisible()
   expect(screen.getAllByRole('link').map((el) => el.textContent)).toEqual(
@@ -29,9 +31,10 @@ test('if no period is stored, loads with default value of "Last 30 days", all ex
       ['Yesterday', 'E'],
       ['Realtime', 'R'],
       ['Last 7 Days', 'W'],
-      ['Last 30 Days', 'T'],
+      ['Last 28 Days', 'F'],
+      ['Last 91 Days', 'N'],
       ['Month to Date', 'M'],
-      ['Last Month', ''],
+      ['Last Month', 'P'],
       ['Year to Date', 'Y'],
       ['Last 12 Months', 'L'],
       ['All time', 'A'],
@@ -48,10 +51,11 @@ test('user can select a new period and its value is stored', async () => {
     )
   })
 
-  await userEvent.click(screen.getByText('Last 30 days'))
+  expect(screen.queryByTestId('datemenu')).toBeNull()
+  await userEvent.click(screen.getByText('Last 28 days'))
   expect(screen.getByTestId('datemenu')).toBeVisible()
   await userEvent.click(screen.getByText('All time'))
-  expect(screen.queryByTestId('datemenu')).toBeNull()
+  expect(screen.queryByTestId('datemenu')).not.toBeInTheDocument()
   expect(localStorage.getItem(periodStorageKey)).toBe('all')
 })
 
@@ -164,12 +168,16 @@ test('going back resets the stored query period to previous value', async () => 
     }
   )
 
-  await userEvent.click(screen.getByText('Last 30 days'))
+  await userEvent.click(screen.getByText('Last 28 days'))
   await userEvent.click(screen.getByText('Year to Date'))
+  expect(screen.queryByTestId('datemenu')).not.toBeInTheDocument()
+
   expect(localStorage.getItem(periodStorageKey)).toBe('year')
 
   await userEvent.click(screen.getByText('Year to Date'))
   await userEvent.click(screen.getByText('Month to Date'))
+  expect(screen.queryByTestId('datemenu')).not.toBeInTheDocument()
+
   expect(localStorage.getItem(periodStorageKey)).toBe('month')
 
   await userEvent.click(screen.getByTestId('browser-back'))

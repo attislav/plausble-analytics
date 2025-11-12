@@ -22,23 +22,61 @@ defmodule PlausibleWeb.StatsControllerTest do
       assert text_of_attr(resp, @react_container, "data-funnels-opted-out") == "false"
       assert text_of_attr(resp, @react_container, "data-props-opted-out") == "false"
       assert text_of_attr(resp, @react_container, "data-props-available") == "true"
+      assert text_of_attr(resp, @react_container, "data-site-segments-available") == "true"
       assert text_of_attr(resp, @react_container, "data-funnels-available") == "true"
       assert text_of_attr(resp, @react_container, "data-has-props") == "false"
       assert text_of_attr(resp, @react_container, "data-logged-in") == "false"
+      assert text_of_attr(resp, @react_container, "data-current-user-role") == "public"
+      assert text_of_attr(resp, @react_container, "data-current-user-id") == "null"
       assert text_of_attr(resp, @react_container, "data-embedded") == ""
+      assert text_of_attr(resp, @react_container, "data-is-consolidated-view") == "false"
+      assert text_of_attr(resp, @react_container, "data-team-has-consolidated-view") == "false"
+      assert text_of_attr(resp, @react_container, "data-team-identifier") == site.team.identifier
 
-      [{"div", attrs, _}] = find(resp, @react_container)
-      assert Enum.all?(attrs, fn {k, v} -> is_binary(k) and is_binary(v) end)
-
-      assert ["noindex, nofollow"] ==
+      assert "noindex, nofollow" ==
                resp
                |> find("meta[name=robots]")
-               |> Floki.attribute("content")
+               |> text_of_attr("content")
 
       assert text_of_element(resp, "title") == "Plausible · #{site.domain}"
     end
 
-    test "plausible.io live demo - shows site stats", %{conn: conn} do
+    test "public site - all segments (personal or site) are stuffed into dataset, without their owner_id and owner_name",
+         %{conn: conn} do
+      user = new_user()
+      site = new_site(owner: user, public: true)
+
+      populate_stats(site, [build(:pageview)])
+
+      emea_site_segment =
+        insert(:segment,
+          site: site,
+          owner: user,
+          type: :site,
+          name: "EMEA region"
+        )
+        |> Map.put(:owner_name, nil)
+        |> Map.put(:owner_id, nil)
+
+      foo_personal_segment =
+        insert(:segment,
+          site: site,
+          owner: user,
+          type: :personal,
+          name: "FOO"
+        )
+        |> Map.put(:owner_name, nil)
+        |> Map.put(:owner_id, nil)
+
+      conn = get(conn, "/#{site.domain}")
+      resp = html_response(conn, 200)
+      assert element_exists?(resp, @react_container)
+
+      assert text_of_attr(resp, @react_container, "data-segments") ==
+               Jason.encode!([foo_personal_segment, emea_site_segment])
+    end
+
+    test "plausible.io live demo - shows site stats, header and footer", %{conn: conn} do
       site = new_site(domain: "plausible.io", public: true)
       populate_stats(site, [build(:pageview)])
 
@@ -46,12 +84,15 @@ defmodule PlausibleWeb.StatsControllerTest do
       resp = html_response(conn, 200)
       assert element_exists?(resp, @react_container)
 
-      assert ["index, nofollow"] ==
+      assert "index, nofollow" ==
                resp
                |> find("meta[name=robots]")
-               |> Floki.attribute("content")
+               |> text_of_attr("content")
 
       assert text_of_element(resp, "title") == "Plausible Analytics: Live Demo"
+      assert resp =~ "Login"
+      assert resp =~ "Want these stats for your website?"
+      assert resp =~ "Getting started"
     end
 
     test "public site - redirect to /login when no stats because verification requires it", %{
@@ -60,7 +101,11 @@ defmodule PlausibleWeb.StatsControllerTest do
       new_site(domain: "some-other-public-site.io", public: true)
 
       conn = get(conn, conn |> get("/some-other-public-site.io") |> redirected_to())
-      assert redirected_to(conn) == Routes.auth_path(conn, :login_form)
+
+      assert redirected_to(conn) ==
+               Routes.auth_path(conn, :login_form,
+                 return_to: "/some-other-public-site.io/verification"
+               )
     end
 
     test "public site - no stats with skip_to_dashboard", %{
@@ -79,47 +124,18 @@ defmodule PlausibleWeb.StatsControllerTest do
       conn = get(conn, "/test-site.com")
       assert html_response(conn, 404) =~ "There's nothing here"
     end
-
-    test "site.scroll_depth_visible_at gets updated correctly", %{conn: conn} do
-      site = new_site(public: true)
-
-      populate_stats(site, [build(:pageview)])
-
-      # No engagements yet - `scroll_depth_visible_at` will remain `nil`
-      html =
-        conn
-        |> get("/#{site.domain}")
-        |> html_response(200)
-
-      assert text_of_attr(html, @react_container, "data-scroll-depth-visible") == "false"
-
-      site = Repo.reload!(site)
-      assert is_nil(site.scroll_depth_visible_at)
-
-      populate_stats(site, [
-        build(:pageview, user_id: 123),
-        build(:engagement, user_id: 123, scroll_depth: 20)
-      ])
-
-      # engagements exist now - `scroll_depth_visible_at` gets set to `utc_now`
-      html =
-        conn
-        |> get("/#{site.domain}")
-        |> html_response(200)
-
-      assert text_of_attr(html, @react_container, "data-scroll-depth-visible") == "true"
-      assert not is_nil(Repo.reload!(site).scroll_depth_visible_at)
-    end
   end
 
   describe "GET /:domain - as a logged in user" do
     setup [:create_user, :log_in, :create_site]
 
-    test "can view stats of a website I've created", %{conn: conn, site: site} do
+    test "can view stats of a website I've created", %{conn: conn, site: site, user: user} do
       populate_stats(site, [build(:pageview)])
       conn = get(conn, "/" <> site.domain)
       resp = html_response(conn, 200)
       assert text_of_attr(resp, @react_container, "data-logged-in") == "true"
+      assert text_of_attr(resp, @react_container, "data-current-user-role") == "owner"
+      assert text_of_attr(resp, @react_container, "data-current-user-id") == "#{user.id}"
     end
 
     test "can view stats of a website I've created, enforcing pageviews check skip", %{
@@ -133,10 +149,115 @@ defmodule PlausibleWeb.StatsControllerTest do
       assert text_of_attr(resp, @react_container, "data-logged-in") == "true"
     end
 
-    test "shows locked page if page is locked", %{conn: conn, user: user} do
-      locked_site = new_site(locked: true, owner: user)
+    on_ee do
+      test "first view of a consolidated dashboard sets stats_start_date and native_stats_start_at according to native_stats_start_at of the earliest team site",
+           %{
+             conn: conn,
+             site: site,
+             user: user
+           } do
+        team = team_of(user)
+        now = NaiveDateTime.utc_now(:second)
+        ten_days_ago = NaiveDateTime.add(now, -10, :day)
+        twenty_days_ago = NaiveDateTime.add(now, -20, :day)
+
+        site
+        |> Plausible.Site.set_native_stats_start_at(ten_days_ago)
+        |> Plausible.Repo.update!()
+
+        new_site(team: team, native_stats_start_at: twenty_days_ago)
+        cv = new_consolidated_view(team)
+
+        conn = get(conn, "/" <> cv.domain)
+        resp = html_response(conn, 200)
+
+        assert text_of_attr(resp, @react_container, "data-domain") == cv.domain
+        assert text_of_attr(resp, @react_container, "data-logged-in") == "true"
+        assert text_of_attr(resp, @react_container, "data-current-user-role") == "owner"
+        assert text_of_attr(resp, @react_container, "data-current-user-id") == "#{user.id}"
+
+        cv = Plausible.Repo.reload(cv)
+        assert cv.stats_start_date == NaiveDateTime.to_date(twenty_days_ago)
+        assert cv.native_stats_start_at == twenty_days_ago
+      end
+
+      test "does not redirect consolidated views to verification", %{
+        conn: conn,
+        user: user
+      } do
+        cv = user |> team_of() |> new_consolidated_view()
+
+        conn = get(conn, "/" <> cv.domain)
+        resp = html_response(conn, 200)
+
+        assert text_of_attr(resp, @react_container, "data-domain") == cv.domain
+        assert text_of_attr(resp, @react_container, "data-logged-in") == "true"
+        assert text_of_attr(resp, @react_container, "data-current-user-role") == "owner"
+        assert text_of_attr(resp, @react_container, "data-current-user-id") == "#{user.id}"
+      end
+    end
+
+    @tag :ee_only
+    test "header, stats are shown; footer is not shown", %{conn: conn, site: site, user: user} do
+      populate_stats(site, [build(:pageview)])
+      conn = get(conn, "/" <> site.domain)
+      resp = html_response(conn, 200)
+      assert resp =~ user.name
+      assert text_of_attr(resp, @react_container, "data-logged-in") == "true"
+      refute resp =~ "Getting started"
+    end
+
+    @tag :ce_build_only
+    test "header, stats, footer are shown", %{conn: conn, site: site, user: user} do
+      populate_stats(site, [build(:pageview)])
+      conn = get(conn, "/" <> site.domain)
+      resp = html_response(conn, 200)
+      assert resp =~ user.name
+      assert text_of_attr(resp, @react_container, "data-logged-in") == "true"
+      assert resp =~ "Getting started"
+    end
+
+    test "shows locked page if site is locked", %{conn: conn, user: user} do
+      locked_site = new_site(owner: user)
+      locked_site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
       conn = get(conn, "/" <> locked_site.domain)
-      assert html_response(conn, 200) =~ "Dashboard locked"
+      resp = html_response(conn, 200)
+      assert resp =~ "Dashboard Locked"
+      assert resp =~ "Please subscribe to the appropriate tier with the link below"
+    end
+
+    test "shows locked page if site is locked for billing role", %{conn: conn, user: user} do
+      other_user = new_user()
+      locked_site = new_site(owner: other_user)
+      locked_site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
+      add_member(team_of(other_user), user: user, role: :billing)
+
+      conn = get(conn, "/" <> locked_site.domain)
+      resp = html_response(conn, 200)
+      assert resp =~ "Dashboard Locked"
+      assert resp =~ "Please subscribe to the appropriate tier with the link below"
+    end
+
+    test "shows locked page if site is locked for viewer role", %{conn: conn, user: user} do
+      other_user = new_user()
+      locked_site = new_site(owner: other_user)
+      locked_site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
+      add_member(team_of(other_user), user: user, role: :viewer)
+
+      conn = get(conn, "/" <> locked_site.domain)
+      resp = html_response(conn, 200)
+      assert resp =~ "Dashboard Locked"
+      refute resp =~ "Please subscribe to the appropriate tier with the link below"
+      assert resp =~ "Owner of this site must upgrade their subscription plan"
+    end
+
+    test "shows locked page for anonymous" do
+      locked_site = new_site(public: true)
+      locked_site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
+      conn = get(build_conn(), "/" <> locked_site.domain)
+      resp = html_response(conn, 200)
+      assert resp =~ "Dashboard Locked"
+      assert resp =~ "You can check back later or contact the site owner"
     end
 
     test "can not view stats of someone else's website", %{conn: conn} do
@@ -147,7 +268,38 @@ defmodule PlausibleWeb.StatsControllerTest do
 
     test "does not show CRM link to the site", %{conn: conn, site: site} do
       conn = get(conn, conn |> get("/" <> site.domain) |> redirected_to())
-      refute html_response(conn, 200) =~ "/crm/sites/site/#{site.id}"
+
+      refute html_response(conn, 200) =~ "/cs/sites"
+    end
+
+    test "all segments (personal or site) are stuffed into dataset, with their associated owner_id and owner_name",
+         %{conn: conn, site: site, user: user} do
+      populate_stats(site, [build(:pageview)])
+
+      emea_site_segment =
+        insert(:segment,
+          site: site,
+          owner: user,
+          type: :site,
+          name: "EMEA region"
+        )
+        |> Map.put(:owner_name, user.name)
+
+      foo_personal_segment =
+        insert(:segment,
+          site: site,
+          owner: user,
+          type: :personal,
+          name: "FOO"
+        )
+        |> Map.put(:owner_name, user.name)
+
+      conn = get(conn, "/#{site.domain}")
+      resp = html_response(conn, 200)
+      assert element_exists?(resp, @react_container)
+
+      assert text_of_attr(resp, @react_container, "data-segments") ==
+               Jason.encode!([foo_personal_segment, emea_site_segment])
     end
   end
 
@@ -155,12 +307,16 @@ defmodule PlausibleWeb.StatsControllerTest do
     @describetag :ee_only
     setup [:create_user, :make_user_super_admin, :log_in]
 
-    test "can view a private dashboard with stats", %{conn: conn} do
+    test "can view a private dashboard with stats", %{conn: conn, user: user} do
       site = new_site()
       populate_stats(site, [build(:pageview)])
 
       conn = get(conn, "/" <> site.domain)
-      assert html_response(conn, 200) =~ "stats-react-container"
+      resp = html_response(conn, 200)
+      assert resp =~ "stats-react-container"
+      assert text_of_attr(resp, @react_container, "data-logged-in") == "true"
+      assert text_of_attr(resp, @react_container, "data-current-user-role") == "super_admin"
+      assert text_of_attr(resp, @react_container, "data-current-user-id") == "#{user.id}"
     end
 
     test "can enter verification when site is without stats", %{conn: conn} do
@@ -172,40 +328,42 @@ defmodule PlausibleWeb.StatsControllerTest do
 
     test "can view a private locked dashboard with stats", %{conn: conn} do
       user = new_user()
-      site = new_site(locked: true, owner: user)
+      site = new_site(owner: user)
+      site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
       populate_stats(site, [build(:pageview)])
 
       conn = get(conn, "/" <> site.domain)
       resp = html_response(conn, 200)
       assert resp =~ "This dashboard is actually locked"
-
-      [{"div", attrs, _}] = find(resp, @react_container)
-      assert Enum.all?(attrs, fn {k, v} -> is_binary(k) and is_binary(v) end)
     end
 
     test "can view private locked verification without stats", %{conn: conn} do
       user = new_user()
-      site = new_site(locked: true, owner: user)
+      site = new_site(owner: user)
+      site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
 
       conn = get(conn, conn |> get("/#{site.domain}") |> redirected_to())
       assert html_response(conn, 200) =~ "Verifying your installation"
     end
 
     test "can view a locked public dashboard", %{conn: conn} do
-      site = new_site(locked: true, public: true)
+      site = new_site(public: true)
+      site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
       populate_stats(site, [build(:pageview)])
 
       conn = get(conn, "/" <> site.domain)
       resp = html_response(conn, 200)
-
-      [{"div", attrs, _}] = find(resp, @react_container)
-      assert Enum.all?(attrs, fn {k, v} -> is_binary(k) and is_binary(v) end)
+      assert resp =~ "This dashboard is actually locked"
     end
 
-    test "shows CRM link to the site", %{conn: conn} do
-      site = new_site()
-      conn = get(conn, conn |> get("/" <> site.domain) |> redirected_to())
-      assert html_response(conn, 200) =~ "/crm/sites/site/#{site.id}"
+    on_ee do
+      test "shows CRM link to the site", %{conn: conn} do
+        site = new_site()
+        conn = get(conn, conn |> get("/" <> site.domain) |> redirected_to())
+
+        assert html_response(conn, 200) =~
+                 Routes.customer_support_site_path(PlausibleWeb.Endpoint, :show, site.id)
+      end
     end
   end
 
@@ -214,7 +372,7 @@ defmodule PlausibleWeb.StatsControllerTest do
   end
 
   describe "GET /:domain/export" do
-    setup [:create_user, :create_site, :set_scroll_depth_visible_at, :log_in]
+    setup [:create_user, :create_site, :log_in]
 
     test "exports all the necessary CSV files", %{conn: conn, site: site} do
       conn = get(conn, "/" <> site.domain <> "/export")
@@ -254,29 +412,65 @@ defmodule PlausibleWeb.StatsControllerTest do
 
       populate_stats(site, [
         build(:pageview, user_id: 12, pathname: "/blog", timestamp: t0),
-        build(:engagement, user_id: 12, pathname: "/blog", timestamp: t1, scroll_depth: 20),
+        build(:engagement,
+          user_id: 12,
+          pathname: "/blog",
+          timestamp: t1,
+          scroll_depth: 20,
+          engagement_time: 60_000
+        ),
         build(:pageview, user_id: 12, pathname: "/another", timestamp: t1),
-        build(:engagement, user_id: 12, pathname: "/another", timestamp: t2, scroll_depth: 24),
+        build(:engagement,
+          user_id: 12,
+          pathname: "/another",
+          timestamp: t2,
+          scroll_depth: 24,
+          engagement_time: 60_000
+        ),
         build(:pageview, user_id: 34, pathname: "/blog", timestamp: t0),
-        build(:engagement, user_id: 34, pathname: "/blog", timestamp: t1, scroll_depth: 17),
+        build(:engagement,
+          user_id: 34,
+          pathname: "/blog",
+          timestamp: t1,
+          scroll_depth: 17,
+          engagement_time: 60_000
+        ),
         build(:pageview, user_id: 34, pathname: "/another", timestamp: t1),
-        build(:engagement, user_id: 34, pathname: "/another", timestamp: t2, scroll_depth: 26),
+        build(:engagement,
+          user_id: 34,
+          pathname: "/another",
+          timestamp: t2,
+          scroll_depth: 26,
+          engagement_time: 60_000
+        ),
         build(:pageview, user_id: 34, pathname: "/blog", timestamp: t2),
-        build(:engagement, user_id: 34, pathname: "/blog", timestamp: t3, scroll_depth: 60),
+        build(:engagement,
+          user_id: 34,
+          pathname: "/blog",
+          timestamp: t3,
+          scroll_depth: 60,
+          engagement_time: 60_000
+        ),
         build(:pageview, user_id: 56, pathname: "/blog", timestamp: t0),
-        build(:engagement, user_id: 56, pathname: "/blog", timestamp: t1, scroll_depth: 100)
+        build(:engagement,
+          user_id: 56,
+          pathname: "/blog",
+          timestamp: t1,
+          scroll_depth: 100,
+          engagement_time: 60_000
+        )
       ])
 
       pages =
         conn
-        |> get("/#{site.domain}/export?date=2020-01-01")
+        |> get("/#{site.domain}/export?period=day&date=2020-01-01")
         |> response(200)
         |> unzip_and_parse_csv(~c"pages.csv")
 
       assert pages == [
                ["name", "visitors", "pageviews", "bounce_rate", "time_on_page", "scroll_depth"],
-               ["/blog", "3", "4", "33", "60.0", "60"],
-               ["/another", "2", "2", "0", "60.0", "25"],
+               ["/blog", "3", "4", "33", "80", "60"],
+               ["/another", "2", "2", "0", "60", "25"],
                [""]
              ]
     end
@@ -335,7 +529,10 @@ defmodule PlausibleWeb.StatsControllerTest do
 
     test "exports data in zipped csvs", %{conn: conn, site: site} do
       populate_exported_stats(site)
-      conn = get(conn, "/" <> site.domain <> "/export?date=2021-10-20")
+
+      conn =
+        get(conn, "/" <> site.domain <> "/export?period=custom&from=2021-09-20&to=2021-10-20")
+
       assert_zip(conn, "30d")
     end
 
@@ -383,7 +580,10 @@ defmodule PlausibleWeb.StatsControllerTest do
 
       visitors =
         conn
-        |> get("/" <> site.domain <> "/export?date=2021-10-20&period=30d&interval=week")
+        |> get(
+          "/" <>
+            site.domain <> "/export?period=custom&from=2021-09-20&to=2021-10-20&interval=week"
+        )
         |> response(200)
         |> unzip_and_parse_csv(~c"visitors.csv")
 
@@ -424,7 +624,7 @@ defmodule PlausibleWeb.StatsControllerTest do
 
       os_versions =
         conn
-        |> get("/#{site.domain}/export")
+        |> get("/#{site.domain}/export?period=day")
         |> response(200)
         |> unzip_and_parse_csv(~c"operating_system_versions.csv")
 
@@ -474,7 +674,9 @@ defmodule PlausibleWeb.StatsControllerTest do
         )
       ])
 
-      conn = get(conn, "/#{site.domain}/export?with_imported=true")
+      tomorrow = Date.utc_today() |> Date.add(1) |> Date.to_iso8601()
+
+      conn = get(conn, "/#{site.domain}/export?date=#{tomorrow}&with_imported=true")
 
       assert response = response(conn, 200)
       {:ok, zip} = :zip.unzip(response, [:memory])
@@ -586,14 +788,20 @@ defmodule PlausibleWeb.StatsControllerTest do
                      "time_on_page",
                      "scroll_depth"
                    ],
-                   ["/test", "1", "1", "0.0", "10.0", ""],
+                   ["/test", "1", "1", "0.0", "10", ""],
                    [""]
                  ]
 
         {~c"entry_pages.csv", data} ->
           assert parse_csv(data) == [
-                   ["name", "unique_entrances", "total_entrances", "visit_duration"],
-                   ["/test", "1", "1", "10.0"],
+                   [
+                     "name",
+                     "unique_entrances",
+                     "total_entrances",
+                     "bounce_rate",
+                     "visit_duration"
+                   ],
+                   ["/test", "1", "1", "0.0", "10.0"],
                    [""]
                  ]
 
@@ -667,48 +875,49 @@ defmodule PlausibleWeb.StatsControllerTest do
     |> Enum.map(&String.split(&1, ","))
   end
 
-  describe "GET /:domain/export - via shared link as anonymous user" do
-    setup [:create_user, :create_site, :set_scroll_depth_visible_at]
-
-    test "export is not allowed for anonymous users", %{conn: conn, site: site} do
-      link = insert(:shared_link, site: site)
-
-      populate_exported_stats(site)
-      conn = get(conn, "/" <> site.domain <> "/export?auth=#{link.slug}&date=2021-10-20")
-      assert response(conn, 404)
-    end
-  end
-
   describe "GET /:domain/export - via shared link" do
-    setup [:create_user, :create_site, :set_scroll_depth_visible_at, :log_in]
+    setup [:create_user, :create_site]
 
     test "exports data in zipped csvs", %{conn: conn, site: site} do
       link = insert(:shared_link, site: site)
 
       populate_exported_stats(site)
-      conn = get(conn, "/" <> site.domain <> "/export?auth=#{link.slug}&date=2021-10-20")
+
+      conn =
+        get(
+          conn,
+          "/" <>
+            site.domain <> "/export?auth=#{link.slug}&period=custom&from=2021-09-20&to=2021-10-20"
+        )
+
       assert_zip(conn, "30d")
     end
   end
 
   describe "GET /:domain/export - for past 6 months" do
-    setup [:create_user, :create_site, :set_scroll_depth_visible_at, :log_in]
+    setup [:create_user, :create_site, :log_in]
 
     test "exports 6 months of data in zipped csvs", %{conn: conn, site: site} do
       populate_exported_stats(site)
-      conn = get(conn, "/" <> site.domain <> "/export?period=6mo&date=2021-10-20")
+      conn = get(conn, "/" <> site.domain <> "/export?period=6mo&date=2021-11-20")
       assert_zip(conn, "6m")
     end
   end
 
   describe "GET /:domain/export - with path filter" do
-    setup [:create_user, :create_site, :set_scroll_depth_visible_at, :log_in]
+    setup [:create_user, :create_site, :log_in]
 
     test "exports filtered data in zipped csvs", %{conn: conn, site: site} do
       populate_exported_stats(site)
 
       filters = Jason.encode!([[:is, "event:page", ["/some-other-page"]]])
-      conn = get(conn, "/#{site.domain}/export?date=2021-10-20&filters=#{filters}")
+
+      conn =
+        get(
+          conn,
+          "/#{site.domain}/export?period=custom&from=2021-09-20&to=2021-10-20&filters=#{filters}"
+        )
+
       assert_zip(conn, "30d-filter-path")
     end
 
@@ -741,7 +950,7 @@ defmodule PlausibleWeb.StatsControllerTest do
 
       pages =
         conn
-        |> get("/#{site.domain}/export?date=2020-01-07&period=7d&filters=#{filters}")
+        |> get("/#{site.domain}/export?date=2020-01-08&period=7d&filters=#{filters}")
         |> response(200)
         |> unzip_and_parse_csv(~c"visitors.csv")
 
@@ -764,34 +973,6 @@ defmodule PlausibleWeb.StatsControllerTest do
                ["2020-01-06", "0", "0", "0", "0.0", "0.0", "", ""],
                ["2020-01-07", "1", "1", "1", "1.0", "100", "0", "90"],
                [""]
-             ]
-    end
-
-    test "does not export scroll depth in visitors.csv if site.scroll_depth_visible_at=nil", %{
-      conn: conn,
-      user: user
-    } do
-      site = new_site(owner: user)
-
-      filters = Jason.encode!([[:is, "event:page", ["/"]]])
-
-      column_headers =
-        conn
-        |> get(
-          "/#{site.domain}/export?period=custom&from=2021-01-01&to=2021-01-02&filters=#{filters}"
-        )
-        |> response(200)
-        |> unzip_and_parse_csv(~c"visitors.csv")
-        |> List.first()
-
-      assert column_headers == [
-               "date",
-               "visitors",
-               "pageviews",
-               "visits",
-               "views_per_visit",
-               "bounce_rate",
-               "visit_duration"
              ]
     end
   end
@@ -860,7 +1041,19 @@ defmodule PlausibleWeb.StatsControllerTest do
         user_id: 123,
         pathname: "/",
         timestamp:
-          Timex.shift(~N[2021-10-20 12:00:00], minutes: -1) |> NaiveDateTime.truncate(:second),
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], minute: -1)
+          |> NaiveDateTime.truncate(:second),
+        country_code: "EE",
+        subdivision1_code: "EE-37",
+        city_geoname_id: 588_409,
+        referrer_source: "Google"
+      ),
+      build(:engagement,
+        user_id: 123,
+        pathname: "/",
+        timestamp: ~N[2021-10-20 12:00:00] |> NaiveDateTime.truncate(:second),
+        engagement_time: 30_000,
+        scroll_depth: 30,
         country_code: "EE",
         subdivision1_code: "EE-37",
         city_geoname_id: 588_409,
@@ -870,16 +1063,49 @@ defmodule PlausibleWeb.StatsControllerTest do
         user_id: 123,
         pathname: "/some-other-page",
         timestamp:
-          Timex.shift(~N[2021-10-20 12:00:00], minutes: -2) |> NaiveDateTime.truncate(:second),
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], minute: -2)
+          |> NaiveDateTime.truncate(:second),
+        country_code: "EE",
+        subdivision1_code: "EE-37",
+        city_geoname_id: 588_409,
+        referrer_source: "Google"
+      ),
+      build(:engagement,
+        user_id: 123,
+        pathname: "/some-other-page",
+        timestamp:
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], minute: -1)
+          |> NaiveDateTime.truncate(:second),
+        engagement_time: 60_000,
+        scroll_depth: 30,
         country_code: "EE",
         subdivision1_code: "EE-37",
         city_geoname_id: 588_409,
         referrer_source: "Google"
       ),
       build(:pageview,
+        user_id: 100,
         pathname: "/",
         timestamp:
-          Timex.shift(~N[2021-10-20 12:00:00], days: -1) |> NaiveDateTime.truncate(:second),
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], day: -1) |> NaiveDateTime.truncate(:second),
+        utm_medium: "search",
+        utm_campaign: "ads",
+        utm_source: "google",
+        utm_content: "content",
+        utm_term: "term",
+        browser: "Firefox",
+        browser_version: "120",
+        operating_system: "Mac",
+        operating_system_version: "14"
+      ),
+      build(:engagement,
+        user_id: 100,
+        pathname: "/",
+        timestamp:
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], day: -1, minute: 1)
+          |> NaiveDateTime.truncate(:second),
+        engagement_time: 30_000,
+        scroll_depth: 30,
         utm_medium: "search",
         utm_campaign: "ads",
         utm_source: "google",
@@ -891,8 +1117,23 @@ defmodule PlausibleWeb.StatsControllerTest do
         operating_system_version: "14"
       ),
       build(:pageview,
+        user_id: 200,
         timestamp:
-          Timex.shift(~N[2021-10-20 12:00:00], months: -1) |> NaiveDateTime.truncate(:second),
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], month: -1)
+          |> NaiveDateTime.truncate(:second),
+        country_code: "EE",
+        browser: "Firefox",
+        browser_version: "120",
+        operating_system: "Mac",
+        operating_system_version: "14"
+      ),
+      build(:engagement,
+        user_id: 200,
+        timestamp:
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], month: -1, minute: 1)
+          |> NaiveDateTime.truncate(:second),
+        engagement_time: 30_000,
+        scroll_depth: 20,
         country_code: "EE",
         browser: "Firefox",
         browser_version: "120",
@@ -900,8 +1141,24 @@ defmodule PlausibleWeb.StatsControllerTest do
         operating_system_version: "14"
       ),
       build(:pageview,
+        user_id: 300,
         timestamp:
-          Timex.shift(~N[2021-10-20 12:00:00], months: -5) |> NaiveDateTime.truncate(:second),
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], month: -5)
+          |> NaiveDateTime.truncate(:second),
+        utm_campaign: "ads",
+        country_code: "EE",
+        referrer_source: "Google",
+        click_id_param: "gclid",
+        browser: "FirefoxNoVersion",
+        operating_system: "MacNoVersion"
+      ),
+      build(:engagement,
+        user_id: 300,
+        timestamp:
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], month: -5, minute: 1)
+          |> NaiveDateTime.truncate(:second),
+        engagement_time: 30_000,
+        scroll_depth: 20,
         utm_campaign: "ads",
         country_code: "EE",
         referrer_source: "Google",
@@ -912,16 +1169,26 @@ defmodule PlausibleWeb.StatsControllerTest do
       build(:pageview,
         user_id: 456,
         timestamp:
-          Timex.shift(~N[2021-10-20 12:00:00], days: -1, minutes: -1)
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], day: -1, minute: -1)
           |> NaiveDateTime.truncate(:second),
         pathname: "/signup",
+        "meta.key": ["variant"],
+        "meta.value": ["A"]
+      ),
+      build(:engagement,
+        user_id: 456,
+        timestamp:
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], day: -1) |> NaiveDateTime.truncate(:second),
+        pathname: "/signup",
+        engagement_time: 60_000,
+        scroll_depth: 20,
         "meta.key": ["variant"],
         "meta.value": ["A"]
       ),
       build(:event,
         user_id: 456,
         timestamp:
-          Timex.shift(~N[2021-10-20 12:00:00], days: -1) |> NaiveDateTime.truncate(:second),
+          NaiveDateTime.shift(~N[2021-10-20 12:00:00], day: -1) |> NaiveDateTime.truncate(:second),
         name: "Signup",
         "meta.key": ["variant"],
         "meta.value": ["A"]
@@ -937,7 +1204,13 @@ defmodule PlausibleWeb.StatsControllerTest do
     test "exports goal-filtered data in zipped csvs", %{conn: conn, site: site} do
       populate_exported_stats(site)
       filters = Jason.encode!([[:is, "event:goal", ["Signup"]]])
-      conn = get(conn, "/#{site.domain}/export?date=2021-10-20&filters=#{filters}")
+
+      conn =
+        get(
+          conn,
+          "/#{site.domain}/export?period=custom&from=2021-09-20&to=2021-10-20&filters=#{filters}"
+        )
+
       assert_zip(conn, "30d-filter-goal")
     end
 
@@ -1015,7 +1288,7 @@ defmodule PlausibleWeb.StatsControllerTest do
 
       os_versions =
         conn
-        |> get("/#{site.domain}/export?filters=#{filters}")
+        |> get("/#{site.domain}/export?period=day&filters=#{filters}")
         |> response(200)
         |> unzip_and_parse_csv(~c"operating_system_versions.csv")
 
@@ -1031,7 +1304,7 @@ defmodule PlausibleWeb.StatsControllerTest do
 
   describe "GET /share/:domain?auth=:auth" do
     test "prompts a password for a password-protected link", %{conn: conn} do
-      site = insert(:site)
+      site = new_site()
 
       link =
         insert(:shared_link, site: site, password_hash: Plausible.Auth.Password.hash("password"))
@@ -1047,7 +1320,27 @@ defmodule PlausibleWeb.StatsControllerTest do
       link = insert(:shared_link, site: site)
 
       conn = get(conn, "/share/test-site.com/?auth=#{link.slug}")
-      assert html_response(conn, 200) =~ "stats-react-container"
+      resp = html_response(conn, 200)
+      assert resp =~ "stats-react-container"
+      assert text_of_attr(resp, @react_container, "data-logged-in") == "false"
+      assert text_of_attr(resp, @react_container, "data-current-user-id") == "null"
+      assert text_of_attr(resp, @react_container, "data-current-user-role") == "public"
+    end
+
+    test "footer and header are shown when accessing public dashboard", %{
+      conn: conn
+    } do
+      site = new_site(domain: "test-site.com")
+      link = insert(:shared_link, site: site)
+
+      conn = get(conn, "/share/test-site.com/?auth=#{link.slug}")
+      resp = html_response(conn, 200)
+      assert resp =~ "stats-react-container"
+      assert text_of_attr(resp, @react_container, "data-logged-in") == "false"
+      assert text_of_attr(resp, @react_container, "data-current-user-id") == "null"
+      assert text_of_attr(resp, @react_container, "data-current-user-role") == "public"
+      assert resp =~ "Login"
+      assert resp =~ "Getting started"
     end
 
     test "returns page with X-Frame-Options disabled so it can be embedded in an iframe", %{
@@ -1071,20 +1364,64 @@ defmodule PlausibleWeb.StatsControllerTest do
       conn = get(conn, "/share/test-site.com/?auth=#{link.slug}&embed=true")
       resp = html_response(conn, 200)
       assert text_of_attr(resp, @react_container, "data-embedded") == "true"
+      assert text_of_attr(resp, @react_container, "data-logged-in") == "false"
+      assert text_of_attr(resp, @react_container, "data-current-user-id") == "null"
+      assert text_of_attr(resp, @react_container, "data-current-user-role") == "public"
       assert Plug.Conn.get_resp_header(conn, "x-frame-options") == []
+    end
 
-      [{"div", attrs, _}] = find(resp, @react_container)
-      assert Enum.all?(attrs, fn {k, v} -> is_binary(k) and is_binary(v) end)
+    test "does not show header, does not show footer on embedded pages", %{conn: conn} do
+      site = new_site(domain: "test-site.com")
+      link = insert(:shared_link, site: site)
+
+      conn = get(conn, "/share/test-site.com/?auth=#{link.slug}&embed=true")
+      resp = html_response(conn, 200)
+      assert text_of_attr(resp, @react_container, "data-embedded") == "true"
+      refute resp =~ "Login"
+      refute resp =~ "Getting started"
     end
 
     test "shows locked page if page is locked", %{conn: conn} do
-      site = insert(:site, domain: "test-site.com", locked: true)
+      site = new_site(domain: "test-site.com")
+      site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
       link = insert(:shared_link, site: site)
 
       conn = get(conn, "/share/test-site.com/?auth=#{link.slug}")
 
-      assert html_response(conn, 200) =~ "Dashboard locked"
+      assert html_response(conn, 200) =~ "Dashboard Locked"
       refute String.contains?(html_response(conn, 200), "Back to my sites")
+    end
+
+    test "shows locked page if shared link is locked due to insufficient team subscription", %{
+      conn: conn
+    } do
+      site = new_site(domain: "test-site.com")
+      link = insert(:shared_link, site: site)
+
+      insert(:starter_subscription, team: site.team)
+
+      conn = get(conn, "/share/test-site.com/?auth=#{link.slug}")
+
+      assert html_response(conn, 200) =~ "Shared Link Unavailable"
+      refute String.contains?(html_response(conn, 200), "Back to my sites")
+    end
+
+    for special_name <- Plausible.Sites.shared_link_special_names() do
+      test "shows dashboard if team subscription insufficient but shared link name is '#{special_name}'",
+           %{conn: conn} do
+        site = new_site(domain: "test-site.com")
+        link = insert(:shared_link, site: site, name: unquote(special_name))
+
+        insert(:starter_subscription, team: site.team)
+
+        html =
+          conn
+          |> get("/share/test-site.com/?auth=#{link.slug}")
+          |> html_response(200)
+
+        assert element_exists?(html, @react_container)
+        refute html =~ "Shared Link Unavailable"
+      end
     end
 
     test "renders 404 not found when no auth parameter supplied", %{conn: conn} do
@@ -1106,34 +1443,37 @@ defmodule PlausibleWeb.StatsControllerTest do
       assert response(conn, 404) =~ "nothing here"
     end
 
-    test "site.scroll_depth_visible_at gets updated correctly", %{conn: conn} do
-      site = insert(:site)
+    test "all segments (personal or site) are stuffed into dataset, without their owner_id and owner_name",
+         %{conn: conn} do
+      user = new_user()
+      site = new_site(domain: "test-site.com", owner: user)
       link = insert(:shared_link, site: site)
 
-      # No engagements yet - `scroll_depth_visible_at` will remain `nil`
-      html =
-        conn
-        |> get("/share/#{site.domain}/?auth=#{link.slug}")
-        |> html_response(200)
+      emea_site_segment =
+        insert(:segment,
+          site: site,
+          owner: user,
+          type: :site,
+          name: "EMEA region"
+        )
+        |> Map.put(:owner_name, nil)
+        |> Map.put(:owner_id, nil)
 
-      assert text_of_attr(html, @react_container, "data-scroll-depth-visible") == "false"
+      foo_personal_segment =
+        insert(:segment,
+          site: site,
+          owner: user,
+          type: :personal,
+          name: "FOO"
+        )
+        |> Map.put(:owner_name, nil)
+        |> Map.put(:owner_id, nil)
 
-      site = Repo.reload!(site)
-      assert is_nil(site.scroll_depth_visible_at)
+      conn = get(conn, "/share/#{site.domain}/?auth=#{link.slug}")
+      resp = html_response(conn, 200)
 
-      populate_stats(site, [
-        build(:pageview, user_id: 123),
-        build(:engagement, user_id: 123, scroll_depth: 20)
-      ])
-
-      # engagements exist now - `scroll_depth_visible_at` gets set to `utc_now`
-      html =
-        conn
-        |> get("/share/#{site.domain}/?auth=#{link.slug}")
-        |> html_response(200)
-
-      assert text_of_attr(html, @react_container, "data-scroll-depth-visible") == "true"
-      assert not is_nil(Repo.reload!(site).scroll_depth_visible_at)
+      assert text_of_attr(resp, @react_container, "data-segments") ==
+               Jason.encode!([foo_personal_segment, emea_site_segment])
     end
   end
 
@@ -1180,8 +1520,8 @@ defmodule PlausibleWeb.StatsControllerTest do
     end
 
     test "only gives access to the correct dashboard", %{conn: conn} do
-      site = insert(:site, domain: "test-site.com")
-      site2 = insert(:site, domain: "test-site2.com")
+      site = new_site(domain: "test-site.com")
+      site2 = new_site(domain: "test-site2.com")
 
       link =
         insert(:shared_link, site: site, password_hash: Plausible.Auth.Password.hash("password"))
@@ -1198,5 +1538,174 @@ defmodule PlausibleWeb.StatsControllerTest do
       conn = get(conn, "/share/#{site2.domain}?auth=#{link2.slug}")
       assert html_response(conn, 200) =~ "Enter password"
     end
+
+    test "preserves query parameters during password authentication", %{conn: conn} do
+      site = new_site()
+
+      link =
+        insert(:shared_link, site: site, password_hash: Plausible.Auth.Password.hash("password"))
+
+      filters = "f=is,country,EE&l=EE,Estonia&f=is,browser,Firefox"
+
+      conn =
+        get(
+          conn,
+          "/share/#{site.domain}?auth=#{link.slug}&#{filters}"
+        )
+
+      assert html_response(conn, 200) =~ "Enter password"
+      html = html_response(conn, 200)
+
+      assert html =~ ~s(action="/share/#{link.slug}/authenticate?)
+      assert html =~ "f=is,browser,Firefox"
+      assert html =~ "f=is,country,EE"
+      assert html =~ "l=EE,Estonia"
+
+      conn =
+        post(
+          conn,
+          "/share/#{link.slug}/authenticate?#{filters}",
+          %{password: "password"}
+        )
+
+      expected_redirect =
+        "/share/#{URI.encode_www_form(site.domain)}?auth=#{link.slug}&#{filters}"
+
+      assert redirected_to(conn, 302) == expected_redirect
+
+      conn =
+        post(
+          conn,
+          "/share/#{link.slug}/authenticate?#{filters}",
+          %{password: "WRONG!"}
+        )
+
+      html = html_response(conn, 200)
+      assert html =~ "Enter password"
+      assert html =~ "Incorrect password"
+
+      assert text_of_attr(html, "form", "action") =~ "?#{filters}"
+
+      conn =
+        post(
+          conn,
+          "/share/#{link.slug}/authenticate?#{filters}",
+          %{password: "password"}
+        )
+
+      redirected_url = redirected_to(conn, 302)
+      assert redirected_url =~ filters
+
+      conn =
+        post(
+          conn,
+          "/share/#{link.slug}/authenticate?#{filters}",
+          %{password: "password"}
+        )
+
+      redirect_path = redirected_to(conn, 302)
+
+      conn = get(conn, redirect_path)
+      assert html_response(conn, 200) =~ "stats-react-container"
+      assert redirect_path =~ filters
+      assert redirect_path =~ "auth=#{link.slug}"
+    end
+  end
+
+  describe "dogfood tracking" do
+    @describetag :ee_only
+
+    test "does not set domain_to_replace on live demo dashboard", %{conn: conn} do
+      site = new_site(domain: "plausible.io", public: true)
+      populate_stats(site, [build(:pageview)])
+      conn = get(conn, "/#{site.domain}")
+      script_params = html_response(conn, 200) |> get_script_params()
+
+      assert %{
+               "location_override" => nil,
+               "domain_to_replace" => nil
+             } = script_params
+    end
+
+    test "sets domain_to_replace on any other dashboard", %{conn: conn} do
+      site = new_site(domain: "öö.ee", public: true)
+      populate_stats(site, [build(:pageview)])
+      conn = get(conn, "/#{site.domain}")
+      script_params = html_response(conn, 200) |> get_script_params()
+
+      assert %{
+               "location_override" => nil,
+               "domain_to_replace" => "%C3%B6%C3%B6.ee"
+             } = script_params
+    end
+
+    test "sets domain_to_replace on live demo shared link", %{conn: conn} do
+      site = new_site(domain: "plausible.io", public: true)
+      link = insert(:shared_link, site: site)
+
+      populate_stats(site, [build(:pageview)])
+
+      conn = get(conn, "/share/#{site.domain}/?auth=#{link.slug}")
+      script_params = html_response(conn, 200) |> get_script_params()
+
+      assert %{
+               "location_override" => nil,
+               "domain_to_replace" => "plausible.io"
+             } = script_params
+    end
+
+    test "sets location_override on a locked dashboard", %{conn: conn} do
+      locked_site = new_site(public: true)
+      locked_site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
+
+      conn = get(conn, "/" <> locked_site.domain)
+      html = html_response(conn, 200)
+
+      script_params = html |> get_script_params()
+
+      assert html =~ "Dashboard Locked"
+      assert script_params["location_override"] == PlausibleWeb.Endpoint.url() <> "/:dashboard"
+    end
+
+    test "sets location_override on a locked shared link", %{conn: conn} do
+      locked_site = new_site()
+      link = insert(:shared_link, site: locked_site)
+
+      insert(:starter_subscription, team: locked_site.team)
+
+      conn = get(conn, "/share/#{locked_site.domain}/?auth=#{link.slug}")
+      html = html_response(conn, 200)
+
+      script_params = get_script_params(html)
+
+      assert html =~ "Shared Link Unavailable"
+
+      assert script_params["location_override"] ==
+               PlausibleWeb.Endpoint.url() <> "/share/:dashboard"
+    end
+
+    test "sets location_override on shared_link_password.html", %{conn: conn} do
+      site = new_site()
+
+      link =
+        insert(:shared_link, site: site, password_hash: Plausible.Auth.Password.hash("password"))
+
+      conn = get(conn, "/share/#{site.domain}?auth=#{link.slug}")
+      html = html_response(conn, 200)
+
+      script_params = get_script_params(html)
+
+      assert html =~ "Enter password"
+
+      assert script_params["location_override"] ==
+               PlausibleWeb.Endpoint.url() <> "/share/:dashboard"
+    end
+  end
+
+  defp get_script_params(html) do
+    html
+    |> find("#dogfood-script")
+    |> text_of_attr("data-script-params")
+    |> JSON.decode!()
   end
 end

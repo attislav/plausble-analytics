@@ -141,6 +141,7 @@ defmodule PlausibleWeb.SiteControllerTest do
              )
     end
 
+    @tag :ee_only
     test "shows upgrade nag message to expired trial user without subscription", %{
       conn: initial_conn,
       user: user
@@ -253,12 +254,13 @@ defmodule PlausibleWeb.SiteControllerTest do
           }
         })
 
-      assert html_response(conn, 200) =~ "can&#39;t be blank"
+      assert html_response(conn, 200) =~ htmlize_quotes("can't be blank")
     end
 
     test "fails to create site when not allowed to in selected team", %{conn: conn, user: user} do
       site = new_site()
       add_member(site.team, user: user, role: :viewer)
+      conn = set_current_team(conn, site.team)
 
       conn =
         post(conn, "/sites", %{
@@ -327,7 +329,10 @@ defmodule PlausibleWeb.SiteControllerTest do
         })
 
       assert html = html_response(conn, 200)
-      assert html =~ "Your account is limited to 10 sites"
+
+      assert text_of_element(html, ~s/[data-test="limit-exceeded-notice"]/) =~
+               "This account is limited to 10 sites"
+
       refute Repo.get_by(Plausible.Site, domain: "over-limit.example.com")
     end
 
@@ -399,7 +404,7 @@ defmodule PlausibleWeb.SiteControllerTest do
           }
         })
 
-      assert html_response(conn, 200) =~ "can&#39;t be blank"
+      assert html_response(conn, 200) =~ htmlize_quotes("can't be blank")
     end
 
     test "only alphanumeric characters and slash allowed in domain", %{conn: conn} do
@@ -428,7 +433,7 @@ defmodule PlausibleWeb.SiteControllerTest do
       assert html_response(conn, 200) =~
                "This domain cannot be registered. Perhaps one of your colleagues registered it?"
 
-      if Plausible.ee?() do
+      if ee?() do
         assert html_response(conn, 200) =~ "support@plausible.io"
       else
         refute html_response(conn, 200) =~ "support@plausible.io"
@@ -451,7 +456,7 @@ defmodule PlausibleWeb.SiteControllerTest do
       assert html_response(conn, 200) =~
                "This domain cannot be registered. Perhaps one of your colleagues registered it?"
 
-      if Plausible.ee?() do
+      if ee?() do
         assert html_response(conn, 200) =~ "support@plausible.io"
       else
         refute html_response(conn, 200) =~ "support@plausible.io"
@@ -478,57 +483,148 @@ defmodule PlausibleWeb.SiteControllerTest do
     end
   end
 
-  describe "GET /:domain/installation" do
-    setup [:create_user, :log_in, :create_site]
-
-    test "static render - spinner determining installation type", %{
-      conn: conn,
-      site: site
-    } do
-      conn = get(conn, "/#{site.domain}/installation")
-
-      assert html_response(conn, 200) =~ "Determining installation type"
-    end
-  end
-
   describe "GET /:domain/settings/general" do
     setup [:create_user, :log_in, :create_site]
 
     setup_patch_env(:google, client_id: "some", api_url: "https://www.googleapis.com")
 
     test "shows settings form", %{conn: conn, site: site} do
+      conn = get(conn, Routes.site_path(conn, :settings_general, site.domain))
+      resp = html_response(conn, 200)
+
+      assert resp =~ "Settings for #{site.domain}"
+      assert resp =~ "Site domain"
+      assert resp =~ "Change domain"
+      assert resp =~ Routes.site_path(conn, :change_domain, site.domain)
+
+      assert resp =~ "Site timezone"
+
+      assert resp =~ "Site installation"
+    end
+
+    on_ee do
+      test "renders only timezone section for a consolidated site", %{conn: conn, user: user} do
+        consolidated_view = user |> team_of() |> new_consolidated_view()
+        conn = get(conn, "/#{consolidated_view.domain}/settings/general")
+        resp = html_response(conn, 200)
+
+        assert [tile_element] = find(resp, ~s|div[data-test-id="settings-tile"]|) |> Enum.into([])
+        assert text(tile_element) =~ "Site timezone"
+      end
+    end
+
+    @tag :ee_only
+    test "all site settings sidebar items are working links", %{
+      conn: conn,
+      user: user
+    } do
+      site = new_site(owner: user, domain: "example.com")
       conn = get(conn, "/#{site.domain}/settings/general")
       resp = html_response(conn, 200)
 
-      assert resp =~ "Site Timezone"
-      assert resp =~ "Site Domain"
-      assert resp =~ "Site Installation"
+      items =
+        resp
+        |> find("[data-testid=site_settings_sidebar] a")
+        |> Enum.map(fn a -> {text(a), text_of_attr(a, "href")} end)
+
+      assert items == [
+               {"General", "/#{site.domain}/settings/general"},
+               {"People", "/#{site.domain}/settings/people"},
+               {"Visibility", "/#{site.domain}/settings/visibility"},
+               {"Goals", "/#{site.domain}/settings/goals"},
+               {"Funnels", "/#{site.domain}/settings/funnels"},
+               {"Custom properties", "/#{site.domain}/settings/properties"},
+               {"Integrations", "/#{site.domain}/settings/integrations"},
+               {"Imports & exports", "/#{site.domain}/settings/imports-exports"},
+               {"Shields", nil},
+               {"IP addresses", "/#{site.domain}/settings/shields/ip_addresses"},
+               {"Countries", "/#{site.domain}/settings/shields/countries"},
+               {"Pages", "/#{site.domain}/settings/shields/pages"},
+               {"Hostnames", "/#{site.domain}/settings/shields/hostnames"},
+               {"Email reports", "/#{site.domain}/settings/email-reports"},
+               {"Danger zone", "/#{site.domain}/settings/danger-zone"}
+             ]
+    end
+
+    @tag :ce_build_only
+    test "all site settings sidebar items are working links on CE", %{
+      conn: conn,
+      user: user
+    } do
+      site = new_site(owner: user, domain: "example.com")
+      conn = get(conn, "/#{site.domain}/settings/general")
+      resp = html_response(conn, 200)
+
+      items =
+        resp
+        |> find("[data-testid=site_settings_sidebar] a")
+        |> Enum.map(fn a -> {text(a), text_of_attr(a, "href")} end)
+
+      assert items == [
+               {"General", "/#{site.domain}/settings/general"},
+               {"People", "/#{site.domain}/settings/people"},
+               {"Visibility", "/#{site.domain}/settings/visibility"},
+               {"Goals", "/#{site.domain}/settings/goals"},
+               {"Custom properties", "/#{site.domain}/settings/properties"},
+               {"Integrations", "/#{site.domain}/settings/integrations"},
+               {"Imports & exports", "/#{site.domain}/settings/imports-exports"},
+               {"Shields", nil},
+               {"IP addresses", "/#{site.domain}/settings/shields/ip_addresses"},
+               {"Countries", "/#{site.domain}/settings/shields/countries"},
+               {"Pages", "/#{site.domain}/settings/shields/pages"},
+               {"Hostnames", "/#{site.domain}/settings/shields/hostnames"},
+               {"Email reports", "/#{site.domain}/settings/email-reports"},
+               {"Danger zone", "/#{site.domain}/settings/danger-zone"}
+             ]
+    end
+
+    on_ee do
+      test "consolidated view settings sidebar items", %{
+        conn: conn,
+        user: user
+      } do
+        team = user |> team_of()
+        site = new_consolidated_view(team)
+        conn = get(conn, "/#{site.domain}/settings/general")
+        resp = html_response(conn, 200)
+
+        items =
+          resp
+          |> find("[data-testid=site_settings_sidebar] a")
+          |> Enum.map(fn a -> {text(a), text_of_attr(a, "href")} end)
+
+        assert resp =~ "Settings for consolidated view"
+
+        assert items == [
+                 {"General", "/#{site.domain}/settings/general"},
+                 {"Goals", "/#{site.domain}/settings/goals"},
+                 {"Custom properties", "/#{site.domain}/settings/properties"},
+                 {"Email reports", "/#{site.domain}/settings/email-reports"}
+               ]
+      end
+    end
+
+    test "header and footer are shown", %{conn: conn, site: site, user: user} do
+      conn = get(conn, "/#{site.domain}/settings/general")
+      resp = html_response(conn, 200)
+      assert resp =~ user.name
+      assert resp =~ "Getting started"
     end
   end
 
   describe "GET /:domain/settings/people" do
     setup [:create_user, :log_in, :create_site]
 
-    @tag :ee_only
-    test "shows members page with links to CRM for super admin", %{
-      conn: conn,
-      user: user
-    } do
-      site = new_site(owner: user)
-      patch_env(:super_admin_user_ids, [user.id])
+    on_ee do
+      test "returns 404 for consolidated view", %{conn: conn, user: user} do
+        {:ok, team} = Plausible.Teams.get_or_create(user)
+        new_site(team: team)
+        new_site(team: team)
+        consolidated_view = new_consolidated_view(team)
 
-      conn = get(conn, "/#{site.domain}/settings/people")
-      resp = html_response(conn, 200)
-
-      assert resp =~ "/crm/auth/user/#{user.id}"
-    end
-
-    test "does not show CRM links to non-super admin user", %{conn: conn, user: user} do
-      site = new_site(owner: user)
-      conn = get(conn, "/#{site.domain}/settings/people")
-      resp = html_response(conn, 200)
-
-      refute resp =~ "/crm/auth/user/#{user.id}"
+        conn = get(conn, "/#{consolidated_view.domain}/settings/people")
+        assert html_response(conn, 404)
+      end
     end
 
     test "lists current members", %{conn: conn, user: user} do
@@ -550,11 +646,11 @@ defmodule PlausibleWeb.SiteControllerTest do
       assert owner_row =~ "Owner"
 
       assert editor_row =~ editor.email
-      assert editor_row_button == "Admin"
+      assert editor_row_button == "Guest Editor"
       refute editor_row =~ "Owner"
 
       assert viewer_row =~ viewer.email
-      assert viewer_row_button == "Viewer"
+      assert viewer_row_button == "Guest Viewer"
       refute viewer_row =~ "Owner"
     end
 
@@ -565,7 +661,8 @@ defmodule PlausibleWeb.SiteControllerTest do
       conn = get(conn, "/#{site.domain}/settings/people")
       resp = html_response(conn, 200)
 
-      assert text_of_element(resp, "#invitation-#{i1.invitation_id}") == "admin@example.com Admin"
+      assert text_of_element(resp, "#invitation-#{i1.invitation_id}") ==
+               "admin@example.com Editor"
 
       assert text_of_element(resp, "#invitation-#{i2.invitation_id}") ==
                "viewer@example.com Viewer"
@@ -584,33 +681,112 @@ defmodule PlausibleWeb.SiteControllerTest do
                "#{new_owner.email} Owner"
     end
 
-    test "renders team management notices", %{conn: conn, user: user} do
+    test "renders distinct team management notices to owner", %{conn: conn, user: user} do
       site = new_site(owner: user)
       resp = conn |> get("/#{site.domain}/settings/people") |> html_response(200)
 
-      refute resp =~ "You can also invite people to your team"
+      refute resp =~ "A Better Way of Inviting People to a Team"
+      assert resp =~ "A Better Way of Inviting People to Your Team"
       refute resp =~ "Team members automatically have access to this site."
 
-      user |> team_of() |> Teams.Team.setup_changeset() |> Repo.update!()
+      team = team_of(user)
+      Teams.complete_setup(team)
+      conn = set_current_team(conn, team)
 
       resp = conn |> get("/#{site.domain}/settings/people") |> html_response(200)
-      assert resp =~ "You can also invite people to your team"
+      refute resp =~ "A Better Way of Inviting People to Your Team"
       assert resp =~ "Team members automatically have access to this site."
     end
 
-    test "does not render team management notices to editors", %{conn: conn, user: user} do
+    test "renders distinct team management notices to editors", %{conn: conn, user: user} do
       # this can go away once we support multiple teams
       user |> team_of() |> Repo.delete!()
       owner = new_user()
       site = new_site(owner: owner)
       add_member(team_of(owner), user: user, role: :editor)
 
+      resp = conn |> get("/#{site.domain}/settings/people") |> html_response(200)
+
+      assert resp =~ "A Better Way of Inviting People to a Team"
+      refute resp =~ "A Better Way of Inviting People to Your Team"
+
       owner |> team_of() |> Teams.Team.setup_changeset() |> Repo.update!()
 
       resp = conn |> get("/#{site.domain}/settings/people") |> html_response(200)
 
-      refute resp =~ "You can also invite people to your team"
+      refute resp =~ "A Better Way of Inviting People to a Team"
       refute resp =~ "Team members automatically have access to this site."
+    end
+
+    @tag :ee_only
+    test "does not render team management notice if Teams feature unavailable", %{
+      conn: conn,
+      user: user
+    } do
+      subscribe_to_starter_plan(user)
+
+      site = new_site(owner: user)
+      resp = conn |> get("/#{site.domain}/settings/people") |> html_response(200)
+
+      refute resp =~ "A Better Way of Inviting People"
+    end
+  end
+
+  describe "GET /:domain/settings/visibility" do
+    setup [:create_user, :log_in, :create_site]
+
+    setup %{user: user} do
+      subscribe_to_growth_plan(user)
+      :ok
+    end
+
+    test "shows shared links section", %{conn: conn, site: site} do
+      conn = get(conn, "/#{site.domain}/settings/visibility")
+
+      resp = html_response(conn, 200)
+      assert resp =~ "Add shared link"
+      assert element_exists?(resp, ~s/button#add-shared-link-button/)
+    end
+
+    test "lists shared links with actions", %{conn: conn, site: site} do
+      link1 = insert(:shared_link, site: site, name: "Link 1")
+      link2 = insert(:shared_link, site: site, name: "Link 2")
+
+      conn = get(conn, "/#{site.domain}/settings/visibility")
+      resp = html_response(conn, 200)
+
+      assert resp =~ "Link 1"
+      assert resp =~ "Link 2"
+
+      assert element_exists?(
+               resp,
+               ~s/button[phx-click="edit-shared-link"][phx-value-slug="#{link1.slug}"]/
+             )
+
+      assert element_exists?(
+               resp,
+               ~s/button[phx-click="delete-shared-link"][phx-value-slug="#{link2.slug}"]/
+             )
+    end
+
+    test "shows message when no shared links are configured", %{conn: conn, site: site} do
+      conn = get(conn, "/#{site.domain}/settings/visibility")
+      resp = html_response(conn, 200)
+
+      assert resp =~ "No shared links configured for this site"
+    end
+
+    test "does not render shared links with special names", %{conn: conn, site: site} do
+      for special_name <- Plausible.Sites.shared_link_special_names() do
+        insert(:shared_link, name: special_name, site: site)
+
+        html =
+          conn
+          |> get("/#{site.domain}/settings/visibility")
+          |> html_response(200)
+
+        refute text_of_element(html, "#shared-links-table") =~ special_name
+      end
     end
   end
 
@@ -773,6 +949,21 @@ defmodule PlausibleWeb.SiteControllerTest do
                "/#{URI.encode_www_form(site.domain)}/settings/integrations"
     end
 
+    test "won't crash if associated google auth has been already deleted", %{
+      conn: conn1,
+      user: user,
+      site: site
+    } do
+      insert(:google_auth, user: user, site: site)
+      delete(conn1, "/#{site.domain}/settings/google-search")
+      conn = delete(conn1, "/#{site.domain}/settings/google-search")
+
+      refute Repo.exists?(Plausible.Site.GoogleAuth)
+
+      assert redirected_to(conn, 302) ==
+               "/#{URI.encode_www_form(site.domain)}/settings/integrations"
+    end
+
     test "fails to delete associated google auth from the outside", %{
       conn: conn,
       user: user
@@ -793,12 +984,11 @@ defmodule PlausibleWeb.SiteControllerTest do
       conn = get(conn, "/#{site.domain}/settings/imports-exports")
       resp = html_response(conn, 200)
 
-      assert text_of_attr(resp, ~s|a[href]|, "href") =~
-               "https://accounts.google.com/o/oauth2/"
+      assert element_exists?(resp, ~s|a[href^="https://accounts.google.com/o/oauth2/"]|)
 
-      assert resp =~ "Import Data"
+      assert(resp =~ "Import data")
       assert resp =~ "There are no imports yet"
-      assert resp =~ "Export Data"
+      assert resp =~ "Export data"
     end
 
     test "renders imports in import list", %{conn: conn, site: site} do
@@ -818,8 +1008,7 @@ defmodule PlausibleWeb.SiteControllerTest do
       conn = get(conn, "/#{site.domain}/settings/imports-exports")
       resp = html_response(conn, 200)
 
-      buttons = find(resp, ~s|a[data-method="delete"]|)
-      assert length(buttons) == 4
+      assert elem_count(resp, ~s|a[data-method="delete"]|) == 4
 
       assert resp =~ "Google Analytics (123456)"
       assert resp =~ "9.9k"
@@ -1501,95 +1690,6 @@ defmodule PlausibleWeb.SiteControllerTest do
     end
   end
 
-  describe "GET /sites/:domain/shared-links/new" do
-    setup [:create_user, :log_in, :create_site]
-
-    test "shows form for new shared link", %{conn: conn, site: site} do
-      conn = get(conn, "/sites/#{site.domain}/shared-links/new")
-
-      assert html_response(conn, 200) =~ "New Shared Link"
-    end
-  end
-
-  describe "POST /sites/:domain/shared-links" do
-    setup [:create_user, :log_in, :create_site]
-
-    test "creates shared link without password", %{conn: conn, site: site} do
-      post(conn, "/sites/#{site.domain}/shared-links", %{
-        "shared_link" => %{"name" => "Link name"}
-      })
-
-      link = Repo.one(Plausible.Site.SharedLink)
-
-      refute is_nil(link.slug)
-      assert is_nil(link.password_hash)
-      assert link.name == "Link name"
-    end
-
-    test "creates shared link with password", %{conn: conn, site: site} do
-      post(conn, "/sites/#{site.domain}/shared-links", %{
-        "shared_link" => %{"password" => "password", "name" => "New name"}
-      })
-
-      link = Repo.one(Plausible.Site.SharedLink)
-
-      refute is_nil(link.slug)
-      refute is_nil(link.password_hash)
-      assert link.name == "New name"
-    end
-  end
-
-  describe "GET /sites/:domain/shared-links/edit" do
-    setup [:create_user, :log_in, :create_site]
-
-    test "shows form to edit shared link", %{conn: conn, site: site} do
-      link = insert(:shared_link, site: site)
-      conn = get(conn, "/sites/#{site.domain}/shared-links/#{link.slug}/edit")
-
-      assert html_response(conn, 200) =~ "Edit Shared Link"
-    end
-  end
-
-  describe "PUT /sites/:domain/shared-links/:slug" do
-    setup [:create_user, :log_in, :create_site]
-
-    test "can update link name", %{conn: conn, site: site} do
-      link = insert(:shared_link, site: site)
-
-      put(conn, "/sites/#{site.domain}/shared-links/#{link.slug}", %{
-        "shared_link" => %{"name" => "Updated link name"}
-      })
-
-      link = Repo.one(Plausible.Site.SharedLink)
-
-      assert link.name == "Updated link name"
-    end
-  end
-
-  describe "DELETE /sites/:domain/shared-links/:slug" do
-    setup [:create_user, :log_in, :create_site]
-
-    test "deletes shared link", %{conn: conn, site: site} do
-      link = insert(:shared_link, site: site)
-
-      conn = delete(conn, "/sites/#{site.domain}/shared-links/#{link.slug}")
-
-      refute Repo.one(Plausible.Site.SharedLink)
-      assert redirected_to(conn, 302) =~ "/#{URI.encode_www_form(site.domain)}/settings"
-      assert Phoenix.Flash.get(conn.assigns.flash, :success) == "Shared Link deleted"
-    end
-
-    test "fails to delete shared link from the outside", %{conn: conn, site: site} do
-      other_site = insert(:site)
-      link = insert(:shared_link, site: other_site)
-
-      conn = delete(conn, "/sites/#{site.domain}/shared-links/#{link.slug}")
-
-      assert Repo.one(Plausible.Site.SharedLink)
-      assert html_response(conn, 404)
-    end
-  end
-
   describe "DELETE /:domain/settings/:forget_import/:import_id" do
     setup [:create_user, :log_in, :create_site, :create_legacy_site_import]
 
@@ -1603,7 +1703,7 @@ defmodule PlausibleWeb.SiteControllerTest do
           site,
           user,
           start_date: ~D[2022-01-01],
-          end_date: Timex.today()
+          end_date: Date.utc_today()
         )
 
       %{args: %{import_id: import_id}} = job
@@ -1674,7 +1774,7 @@ defmodule PlausibleWeb.SiteControllerTest do
         site,
         user,
         start_date: ~D[2022-01-01],
-        end_date: Timex.today()
+        end_date: Date.utc_today()
       )
 
       populate_stats(site, [
@@ -1695,7 +1795,7 @@ defmodule PlausibleWeb.SiteControllerTest do
           site,
           user,
           start_date: ~D[2022-01-01],
-          end_date: Timex.today()
+          end_date: Date.utc_today()
         )
 
       populate_stats(site, [
@@ -1705,95 +1805,6 @@ defmodule PlausibleWeb.SiteControllerTest do
       delete(conn, "/#{site.domain}/settings/forget-imported")
 
       assert Repo.reload(job).state == "cancelled"
-    end
-  end
-
-  describe "domain change" do
-    setup [:create_user, :log_in, :create_site]
-
-    test "shows domain change in the settings form", %{conn: conn, site: site} do
-      conn = get(conn, Routes.site_path(conn, :settings_general, site.domain))
-      resp = html_response(conn, 200)
-
-      assert resp =~ "Site Domain"
-      assert resp =~ "Change Domain"
-      assert resp =~ Routes.site_path(conn, :change_domain, site.domain)
-    end
-
-    test "domain change form renders", %{conn: conn, site: site} do
-      conn = get(conn, Routes.site_path(conn, :change_domain, site.domain))
-      resp = html_response(conn, 200)
-      assert resp =~ Routes.site_path(conn, :change_domain_submit, site.domain)
-
-      assert text(resp) =~
-               "Once you change your domain, you must update Plausible Installation on your site within 72 hours"
-    end
-
-    test "domain change form submission when no change is made", %{conn: conn, site: site} do
-      conn =
-        put(conn, Routes.site_path(conn, :change_domain_submit, site.domain), %{
-          "site" => %{"domain" => site.domain}
-        })
-
-      resp = html_response(conn, 200)
-      assert resp =~ "New domain must be different than the current one"
-    end
-
-    test "domain change form submission to an existing domain", %{conn: conn, site: site} do
-      another_site = insert(:site)
-
-      conn =
-        put(conn, Routes.site_path(conn, :change_domain_submit, site.domain), %{
-          "site" => %{"domain" => another_site.domain}
-        })
-
-      resp = html_response(conn, 200)
-      assert resp =~ "This domain cannot be registered"
-
-      site = Repo.reload!(site)
-      assert site.domain != another_site.domain
-      assert is_nil(site.domain_changed_from)
-    end
-
-    test "domain change form submission to a domain in transition period", %{
-      conn: conn,
-      site: site
-    } do
-      another_site = insert(:site, domain_changed_from: "foo.example.com")
-
-      conn =
-        put(conn, Routes.site_path(conn, :change_domain_submit, site.domain), %{
-          "site" => %{"domain" => "foo.example.com"}
-        })
-
-      resp = html_response(conn, 200)
-      assert resp =~ "This domain cannot be registered"
-
-      site = Repo.reload!(site)
-      assert site.domain != another_site.domain
-      assert is_nil(site.domain_changed_from)
-    end
-
-    test "domain change successful form submission redirects to installation", %{
-      conn: conn,
-      site: site
-    } do
-      original_domain = site.domain
-      new_domain = "â-example.com"
-
-      conn =
-        put(conn, Routes.site_path(conn, :change_domain_submit, site.domain), %{
-          "site" => %{"domain" => new_domain}
-        })
-
-      assert redirected_to(conn) ==
-               Routes.site_path(conn, :installation, new_domain,
-                 flow: PlausibleWeb.Flows.domain_change()
-               )
-
-      site = Repo.reload!(site)
-      assert site.domain == new_domain
-      assert site.domain_changed_from == original_domain
     end
   end
 
@@ -1807,6 +1818,133 @@ defmodule PlausibleWeb.SiteControllerTest do
       delete(conn, Routes.site_path(conn, :reset_stats, site.domain))
 
       assert Repo.reload(site).stats_start_date == nil
+    end
+  end
+
+  describe "change team" do
+    setup [:create_user, :log_in, :create_site]
+
+    test "no change team section appears when <1 team", %{conn: conn, site: site} do
+      conn = get(conn, Routes.site_path(conn, :settings_danger_zone, site.domain))
+      html = html_response(conn, 200)
+      assert html =~ "Danger zone"
+      assert html =~ "Delete #{site.domain}"
+      refute html =~ "Change #{site.domain} team"
+    end
+
+    test "change team section appears when >1 team", %{user: user, conn: conn, site: site} do
+      join_2nd_team(user)
+
+      conn = get(conn, Routes.site_path(conn, :settings_danger_zone, site.domain))
+      html = html_response(conn, 200)
+      assert html =~ "Danger zone"
+      assert html =~ "Delete #{site.domain}"
+      assert html =~ "Change #{site.domain} team"
+    end
+
+    test "change team form renders", %{user: user, conn: conn, site: site} do
+      join_2nd_team(user)
+
+      conn = get(conn, Routes.membership_path(conn, :change_team_form, site.domain))
+      html = html_response(conn, 200)
+      assert html =~ "Change the team of #{site.domain}"
+
+      assert element_exists?(
+               html,
+               ~s|form[action="#{Routes.membership_path(conn, :change_team, site.domain)}"]|
+             )
+
+      assert element_exists?(html, ~s|button[type=submit]|)
+    end
+
+    @tag :ee_only
+    test "change team form error: destination team has no subscription", %{
+      user: user,
+      conn: conn,
+      site: site
+    } do
+      team2 = join_2nd_team(user)
+
+      conn =
+        post(
+          conn,
+          Routes.membership_path(conn, :change_team, site.domain,
+            team_identifier: team2.identifier
+          )
+        )
+
+      html = html_response(conn, 200)
+      assert text(html) =~ "This team doesn't have a subscription"
+    end
+
+    @tag :ee_only
+    test "change team form error: subscription insufficient", %{
+      user: user,
+      conn: conn,
+      site: site
+    } do
+      team2 = join_2nd_team(user, subscribe?: true)
+
+      generate_usage_for(site, 11_000, NaiveDateTime.utc_now() |> NaiveDateTime.shift(day: -5))
+      generate_usage_for(site, 11_000, NaiveDateTime.utc_now() |> NaiveDateTime.shift(day: -35))
+
+      conn =
+        post(
+          conn,
+          Routes.membership_path(conn, :change_team, site.domain,
+            team_identifier: team2.identifier
+          )
+        )
+
+      html = html_response(conn, 200)
+
+      assert text(html) =~ "This site's usage is over the limits of the team's subscription"
+    end
+
+    test "change team form error: unknown team identifier", %{
+      conn: conn,
+      site: site
+    } do
+      assert_raise Ecto.NoResultsError, fn ->
+        post(
+          conn,
+          Routes.membership_path(conn, :change_team, site.domain,
+            team_identifier: Ecto.UUID.generate()
+          )
+        )
+      end
+    end
+
+    test "successfully changes team", %{
+      user: user,
+      conn: conn,
+      site: site
+    } do
+      team2 = join_2nd_team(user, subscribe?: true)
+
+      conn =
+        post(
+          conn,
+          Routes.membership_path(conn, :change_team, site.domain,
+            team_identifier: team2.identifier
+          )
+        )
+
+      assert redirected_to(conn) == "/sites?__team=#{team2.identifier}"
+      assert Phoenix.Flash.get(conn.assigns.flash, :success) =~ "Site team was changed"
+    end
+
+    defp join_2nd_team(user, opts \\ []) do
+      another = new_user()
+      new_site(owner: another)
+      team2 = team_of(another)
+      add_member(team2, user: user, role: :admin)
+
+      if opts[:subscribe?] do
+        subscribe_to_growth_plan(another)
+      end
+
+      team2
     end
   end
 end

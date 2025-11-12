@@ -1,5 +1,6 @@
 defmodule PlausibleWeb.Api.ExternalStatsController.QueryComparisonsTest do
   use PlausibleWeb.ConnCase
+  import Plausible.Teams.Test
 
   setup [:create_user, :create_site, :create_api_key, :use_api_key, :create_site_import]
 
@@ -111,6 +112,129 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryComparisonsTest do
                }
              }
            ]
+  end
+
+  test "timeseries last 28d period compares the same period with and without match_day_of_week=true",
+       %{
+         conn: conn,
+         site: site
+       } do
+    today = ~D[2021-06-10]
+
+    make_request = fn match_day_of_week ->
+      conn
+      |> post("/api/v2/query-internal-test", %{
+        "site_id" => site.domain,
+        "metrics" => ["visitors"],
+        "date_range" => "28d",
+        "date" => Date.to_iso8601(today),
+        "dimensions" => ["time"],
+        "include" => %{
+          "time_labels" => true,
+          "comparisons" => %{
+            "mode" => "previous_period",
+            "match_day_of_week" => match_day_of_week
+          }
+        }
+      })
+      |> json_response(200)
+    end
+
+    assert %{"results" => results1} = make_request.(false)
+    assert %{"results" => results2} = make_request.(true)
+
+    assert results1 == results2
+
+    expected_first_date = today |> Date.shift(day: -28) |> Date.to_iso8601()
+    expected_last_date = today |> Date.shift(day: -1) |> Date.to_iso8601()
+    expected_comparison_first_date = today |> Date.shift(day: -56) |> Date.to_iso8601()
+    expected_comparison_last_date = today |> Date.shift(day: -29) |> Date.to_iso8601()
+
+    assert %{
+             "dimensions" => [actual_first_date],
+             "comparison" => %{
+               "dimensions" => [actual_comparison_first_date]
+             }
+           } = List.first(results1)
+
+    assert %{
+             "dimensions" => [actual_last_date],
+             "comparison" => %{
+               "dimensions" => [actual_comparison_last_date]
+             }
+           } = List.last(results1)
+
+    assert actual_first_date == expected_first_date
+    assert actual_last_date == expected_last_date
+    assert actual_comparison_first_date == expected_comparison_first_date
+    assert actual_comparison_last_date == expected_comparison_last_date
+  end
+
+  test "timeseries last 91d period in year_over_year comparison", %{
+    conn: conn,
+    site: site
+  } do
+    populate_stats(site, [
+      build(:pageview, timestamp: ~N[2021-04-01 00:00:00]),
+      build(:pageview, timestamp: ~N[2021-04-01 00:00:00]),
+      build(:pageview, timestamp: ~N[2021-04-05 00:00:00]),
+      build(:pageview, timestamp: ~N[2021-04-05 00:00:00]),
+      build(:pageview, timestamp: ~N[2021-06-30 00:00:00]),
+      build(:pageview, timestamp: ~N[2022-04-01 00:00:00]),
+      build(:pageview, timestamp: ~N[2022-04-05 00:00:00]),
+      build(:pageview, timestamp: ~N[2022-06-30 00:00:00]),
+      build(:pageview, timestamp: ~N[2022-07-01 00:00:00])
+    ])
+
+    Plausible.Stats.Query.Test.fix_now(~U[2022-07-01 14:00:00Z])
+
+    conn =
+      post(conn, "/api/v2/query-internal-test", %{
+        "site_id" => site.domain,
+        "metrics" => ["visitors"],
+        "date_range" => "91d",
+        "dimensions" => ["time:day"],
+        "include" => %{
+          "time_labels" => true,
+          "comparisons" => %{"mode" => "year_over_year"}
+        }
+      })
+
+    assert %{
+             "results" => results,
+             "meta" => %{"time_labels" => time_labels}
+           } = json_response(conn, 200)
+
+    assert "2022-04-01" = List.first(time_labels)
+    assert "2022-04-05" = Enum.at(time_labels, 4)
+    assert "2022-06-30" = List.last(time_labels)
+
+    assert %{
+             "dimensions" => ["2022-04-01"],
+             "metrics" => [1],
+             "comparison" => %{
+               "dimensions" => ["2021-04-01"],
+               "metrics" => [2]
+             }
+           } = Enum.find(results, &(&1["dimensions"] == ["2022-04-01"]))
+
+    assert %{
+             "dimensions" => ["2022-04-05"],
+             "metrics" => [1],
+             "comparison" => %{
+               "dimensions" => ["2021-04-05"],
+               "metrics" => [2]
+             }
+           } = Enum.find(results, &(&1["dimensions"] == ["2022-04-05"]))
+
+    assert %{
+             "dimensions" => ["2022-06-30"],
+             "metrics" => [1],
+             "comparison" => %{
+               "dimensions" => ["2021-06-30"],
+               "metrics" => [1]
+             }
+           } = Enum.find(results, &(&1["dimensions"] == ["2022-06-30"]))
   end
 
   test "dimensional comparison with low limit", %{conn: conn, site: site} do
@@ -253,5 +377,100 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryComparisonsTest do
                }
              }
            ]
+  end
+
+  describe "custom comparison range" do
+    test "can use date range for custom comparison", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, timestamp: ~N[2021-01-01 00:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-01 00:25:00]),
+        build(:pageview, timestamp: ~N[2021-01-07 00:00:00])
+      ])
+
+      conn =
+        post(conn, "/api/v2/query-internal-test", %{
+          "site_id" => site.domain,
+          "metrics" => ["pageviews"],
+          "date_range" => ["2021-01-07", "2021-01-13"],
+          "include" => %{
+            "comparisons" => %{"mode" => "custom", "date_range" => ["2021-01-01", "2021-01-06"]}
+          }
+        })
+
+      assert json_response(conn, 200)["results"] == [
+               %{
+                 "dimensions" => [],
+                 "metrics" => [1],
+                 "comparison" => %{"change" => [-50], "dimensions" => [], "metrics" => [2]}
+               }
+             ]
+    end
+
+    test "can use datetime range for custom comparison", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, timestamp: ~N[2021-01-01 01:00:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 05:25:00]),
+        build(:pageview, user_id: 1, timestamp: ~N[2021-01-01 05:26:00]),
+        build(:pageview, timestamp: ~N[2021-01-02 04:00:00]),
+        build(:pageview, timestamp: ~N[2021-01-03 02:00:00])
+      ])
+
+      conn =
+        post(conn, "/api/v2/query-internal-test", %{
+          "site_id" => site.domain,
+          "metrics" => ["visitors", "pageviews"],
+          "date_range" => ["2021-01-02T03:00:00Z", "2021-01-03T02:59:59Z"],
+          "include" => %{
+            "comparisons" => %{
+              "mode" => "custom",
+              "date_range" => ["2021-01-01T03:00:00Z", "2021-01-02T02:59:59Z"]
+            }
+          }
+        })
+
+      assert json_response(conn, 200)["results"] == [
+               %{
+                 "dimensions" => [],
+                 "metrics" => [2, 2],
+                 "comparison" => %{"change" => [100, 0], "dimensions" => [], "metrics" => [1, 2]}
+               }
+             ]
+    end
+
+    test "custom datetime range comparison handles timezones correctly", %{conn: conn, user: user} do
+      weird_tz_site = new_site(owner: user, timezone: "America/Havana")
+
+      populate_stats(weird_tz_site, [
+        # 03:00 America/Havana
+        build(:pageview, timestamp: ~N[2021-01-01 08:00:00]),
+        # 05:25 America/Havana
+        build(:pageview, timestamp: ~N[2021-01-01 10:25:00]),
+        # 04:00 America/Havana
+        build(:pageview, timestamp: ~N[2021-01-02 09:00:00]),
+        # 02:00 America/Havana
+        build(:pageview, timestamp: ~N[2021-01-03 08:00:00])
+      ])
+
+      conn =
+        post(conn, "/api/v2/query-internal-test", %{
+          "site_id" => weird_tz_site.domain,
+          "metrics" => ["pageviews"],
+          "date_range" => ["2021-01-02T03:00:00Z", "2021-01-03T02:59:59Z"],
+          "include" => %{
+            "comparisons" => %{
+              "mode" => "custom",
+              "date_range" => ["2021-01-01T03:00:00Z", "2021-01-02T02:59:59Z"]
+            }
+          }
+        })
+
+      assert json_response(conn, 200)["results"] == [
+               %{
+                 "dimensions" => [],
+                 "metrics" => [1],
+                 "comparison" => %{"change" => [-50], "dimensions" => [], "metrics" => [2]}
+               }
+             ]
+    end
   end
 end

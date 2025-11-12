@@ -54,55 +54,79 @@ defmodule Plausible.Stats.TableDecider do
     end
   end
 
-  def partition_metrics(metrics, query) do
-    %{
-      event: event_only_metrics,
-      session: session_only_metrics,
-      either: either_metrics,
-      other: other_metrics,
-      sample_percent: sample_percent
-    } =
-      partition(metrics, query, &metric_partitioner/2)
+  @type table_type() :: :events | :sessions
+  @type metric() :: String.t()
 
-    %{event: event_only_filters, session: session_only_filters} =
+  @spec partition_metrics(list(metric()), Query.t()) :: list({table_type(), list(metric())})
+  def partition_metrics(requested_metrics, query) do
+    metrics = partition(requested_metrics, query, &metric_partitioner/2)
+
+    filters =
       query.filters
       |> dimensions_used_in_filters()
       |> partition(query, &dimension_partitioner/2)
 
-    %{event: event_only_dimensions, session: session_only_dimensions} =
-      partition(query.dimensions, query, &dimension_partitioner/2)
+    dimensions = partition(query.dimensions, query, &dimension_partitioner/2)
 
     cond do
       # Only one table needs to be queried
-      empty?(event_only_metrics) && empty?(event_only_filters) && empty?(event_only_dimensions) ->
-        {[], session_only_metrics ++ either_metrics ++ sample_percent, other_metrics}
+      empty?(metrics.event) && empty?(filters.event) && empty?(dimensions.event) ->
+        [sessions: metrics.session ++ metrics.either ++ metrics.sample_percent]
 
-      empty?(session_only_metrics) && empty?(session_only_filters) &&
-          empty?(session_only_dimensions) ->
-        {event_only_metrics ++ either_metrics ++ sample_percent, [], other_metrics}
+      empty?(metrics.session) && empty?(filters.session) && empty?(dimensions.session) ->
+        [events: metrics.event ++ metrics.either ++ metrics.sample_percent]
 
       # Filters and/or dimensions on both events and sessions, but only one kind of metric
-      empty?(event_only_metrics) && empty?(event_only_dimensions) ->
-        {[], session_only_metrics ++ either_metrics ++ sample_percent, other_metrics}
+      empty?(metrics.event) && empty?(dimensions.event) ->
+        [sessions: metrics.session ++ metrics.either ++ metrics.sample_percent]
 
-      empty?(session_only_metrics) && empty?(session_only_dimensions) ->
-        {event_only_metrics ++ either_metrics ++ sample_percent, [], other_metrics}
+      empty?(metrics.session) && empty?(dimensions.session) ->
+        [events: metrics.event ++ metrics.either ++ metrics.sample_percent]
 
       # Default: prefer events
       true ->
-        {event_only_metrics ++ either_metrics ++ sample_percent,
-         session_only_metrics ++ sample_percent, other_metrics}
+        [
+          events: metrics.event ++ metrics.either ++ metrics.sample_percent,
+          sessions: metrics.session ++ metrics.sample_percent
+        ]
+    end
+    |> Enum.flat_map(&smear_session_metrics(&1, query))
+    |> Enum.reject(fn {_table_type, metrics} -> empty?(metrics) end)
+  end
+
+  # :TRICKY: When counting session metrics, we want to count each visit/visitor across
+  #   the length of the session, not just when events occurred or when session started.
+  #   For this reason, we smear the session metrics across the length of the session.
+  #   See `time_slots` usage in `Plausible.Stats.SQL.Expression` to understand how this is done.
+  @smearable_metrics [:visitors, :visits]
+  defp smear_session_metrics({:sessions, metrics} = value, query) do
+    if "time:minute" in query.dimensions or "time:hour" in query.dimensions do
+      # Split metrics into two groups: one with visitors and visits, and the remaining ones
+      {smearable_metrics, session_metrics} = Enum.split_with(metrics, &(&1 in @smearable_metrics))
+
+      [
+        {:sessions, session_metrics},
+        {:sessions_smeared, smearable_metrics}
+      ]
+    else
+      [value]
     end
   end
+
+  defp smear_session_metrics(value, _query), do: [value]
 
   # Note: This is inaccurate when filtering but required for old backwards compatibility
   defp metric_partitioner(%Query{legacy_breakdown: true}, :pageviews), do: :either
   defp metric_partitioner(%Query{legacy_breakdown: true}, :events), do: :either
 
+  # :TRICKY: For time:minute dimension we prefer sessions over events as there
+  # might be minutes where no events occurred but the session was active.
+  defp metric_partitioner(query, metric) when metric in [:visitors, :visits] do
+    if "time:minute" in query.dimensions, do: :session, else: :either
+  end
+
   defp metric_partitioner(_, :conversion_rate), do: :either
   defp metric_partitioner(_, :group_conversion_rate), do: :either
-  defp metric_partitioner(_, :visitors), do: :either
-  defp metric_partitioner(_, :visits), do: :either
   defp metric_partitioner(_, :percentage), do: :either
 
   defp metric_partitioner(_, :average_revenue), do: :event
@@ -111,11 +135,12 @@ defmodule Plausible.Stats.TableDecider do
   defp metric_partitioner(_, :pageviews), do: :event
   defp metric_partitioner(_, :events), do: :event
   defp metric_partitioner(_, :bounce_rate), do: :session
+  defp metric_partitioner(_, :time_on_page), do: :event
   defp metric_partitioner(_, :visit_duration), do: :session
   defp metric_partitioner(_, :views_per_visit), do: :session
+  defp metric_partitioner(_, :exit_rate), do: :session
 
   # Calculated metrics - handled on callsite separately from other metrics.
-  defp metric_partitioner(_, :time_on_page), do: :other
   defp metric_partitioner(_, :total_visitors), do: :other
   # Sample percentage is included in both tables if queried.
   defp metric_partitioner(_, :sample_percent), do: :sample_percent

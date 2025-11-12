@@ -14,7 +14,7 @@ defmodule Plausible.Stats.FilterSuggestions do
 
     q =
       from(
-        e in query_sessions(site, query),
+        e in query_sessions(query),
         group_by: e.country_code,
         order_by: [desc: fragment("count(*)")],
         select: e.country_code
@@ -35,7 +35,7 @@ defmodule Plausible.Stats.FilterSuggestions do
 
   def filter_suggestions(site, query, "region", "") do
     from(
-      e in query_sessions(site, query),
+      e in query_sessions(query),
       group_by: e.subdivision1_code,
       order_by: [desc: fragment("count(*)")],
       select: e.subdivision1_code,
@@ -67,7 +67,7 @@ defmodule Plausible.Stats.FilterSuggestions do
 
     q =
       from(
-        e in query_sessions(site, query),
+        e in query_sessions(query),
         group_by: e.subdivision1_code,
         order_by: [desc: fragment("count(*)")],
         select: e.subdivision1_code,
@@ -105,7 +105,7 @@ defmodule Plausible.Stats.FilterSuggestions do
 
   def filter_suggestions(site, query, "city", "") do
     from(
-      e in query_sessions(site, query),
+      e in query_sessions(query),
       group_by: e.city_geoname_id,
       order_by: [desc: fragment("count(*)")],
       select: e.city_geoname_id,
@@ -129,7 +129,7 @@ defmodule Plausible.Stats.FilterSuggestions do
 
     q =
       from(
-        e in query_sessions(site, query),
+        e in query_sessions(query),
         group_by: e.city_geoname_id,
         order_by: [desc: fragment("count(*)")],
         select: e.city_geoname_id,
@@ -163,7 +163,7 @@ defmodule Plausible.Stats.FilterSuggestions do
   def filter_suggestions(site, query, "prop_key", filter_search) do
     filter_query = if filter_search == nil, do: "%", else: "%#{filter_search}%"
 
-    from(e in base_event_query(site, query),
+    from(e in base_event_query(query),
       join: meta in "meta",
       hints: "ARRAY",
       on: true,
@@ -213,9 +213,9 @@ defmodule Plausible.Stats.FilterSuggestions do
 
     base_q =
       if filter_name in [:pathname, :hostname] do
-        base_event_query(site, query)
+        base_event_query(query)
       else
-        query_sessions(site, query)
+        query_sessions(query)
       end
 
     from(e in base_q,
@@ -233,26 +233,24 @@ defmodule Plausible.Stats.FilterSuggestions do
     )
     |> limit(25)
     |> ClickhouseRepo.all()
+    |> add_direct_suggestion(filter_name, filter_search)
     |> Enum.filter(fn suggestion -> suggestion != "" end)
     |> wrap_suggestions()
   end
 
-  def custom_prop_value_filter_suggestions(site, query, prop_key, filter_search) do
+  def custom_prop_value_filter_suggestions(_site, query, prop_key, filter_search) do
     filter_query = if filter_search == nil, do: "%", else: "%#{filter_search}%"
 
     none_q =
       from(
-        e in base_event_query(
-          site,
-          Query.remove_top_level_filters(query, ["event:props:#{prop_key}"])
-        ),
+        e in base_event_query(Query.remove_top_level_filters(query, ["event:props:#{prop_key}"])),
         select: "(none)",
         where: not has_key(e, :meta, ^prop_key),
         limit: 1
       )
 
     search_q =
-      from(e in base_event_query(site, query),
+      from(e in base_event_query(query),
         select: get_by_key(e, :meta, ^prop_key),
         where:
           has_key(e, :meta, ^prop_key) and
@@ -286,6 +284,19 @@ defmodule Plausible.Stats.FilterSuggestions do
   defp apply_additional_filters(q, _, _), do: q
 
   defp wrap_suggestions(list) do
-    Enum.map(list, fn val -> %{value: val, label: val} end)
+    list |> Enum.uniq() |> Enum.map(fn val -> %{value: val, label: val} end)
+  end
+
+  @no_ref "Direct / None"
+  defp add_direct_suggestion(suggestions, :referrer_source, filter_search) do
+    if String.contains?(String.downcase(@no_ref), String.downcase(filter_search)) do
+      [@no_ref | suggestions]
+    else
+      suggestions
+    end
+  end
+
+  defp add_direct_suggestion(suggestions, _filter_name, _filter_search) do
+    suggestions
   end
 end

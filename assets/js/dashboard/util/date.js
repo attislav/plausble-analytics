@@ -1,7 +1,11 @@
-import dayjs from 'dayjs';
-import utc from 'dayjs/plugin/utc';
+import dayjs from 'dayjs'
+import utc from 'dayjs/plugin/utc'
 
 dayjs.extend(utc)
+
+export function utcNow() {
+  return dayjs()
+}
 
 // https://stackoverflow.com/a/50130338
 export function formatISO(date) {
@@ -21,11 +25,11 @@ export function formatMonthYYYY(date) {
 }
 
 export function formatYear(date) {
-  return `Year of ${date.year()}`;
+  return `Year of ${date.year()}`
 }
 
 export function formatYearShort(date) {
-   return date.getUTCFullYear().toString().substring(2)
+  return date.getUTCFullYear().toString().substring(2)
 }
 
 export function formatDay(date) {
@@ -67,6 +71,10 @@ export function parseNaiveDate(dateString) {
   return dayjs(dateString)
 }
 
+export function dateForSite(utcDateString, site) {
+  return dayjs.utc(utcDateString).utcOffset(site.offset / 60)
+}
+
 export function nowForSite(site) {
   return dayjs.utc().utcOffset(site.offset / 60)
 }
@@ -91,6 +99,12 @@ export function isToday(site, date) {
   return isSameDate(date, nowForSite(site))
 }
 
+export function isTodayOrYesterday(isoDate) {
+  const isoToday = formatISO(dayjs())
+  const isoYesterday = formatISO(dayjs().subtract(1, 'day'))
+  return isoDate === isoToday || isoDate === isoYesterday
+}
+
 export function isThisMonth(site, date) {
   return formatMonthYYYY(date) === formatMonthYYYY(nowForSite(site))
 }
@@ -102,16 +116,16 @@ export function isThisYear(site, date) {
 export function isBefore(date1, date2, period) {
   /* assumes 'day' and 'month' are the only valid periods */
   if (date1.year() !== date2.year()) {
-    return date1.year() < date2.year();
+    return date1.year() < date2.year()
   }
-  if (period === "year") {
-    return false;
+  if (period === 'year') {
+    return false
   }
   if (date1.month() !== date2.month()) {
-    return date1.month() < date2.month();
+    return date1.month() < date2.month()
   }
-  if (period === "month") {
-    return false;
+  if (period === 'month') {
+    return false
   }
   return date1.date() < date2.date()
 }
@@ -119,16 +133,16 @@ export function isBefore(date1, date2, period) {
 export function isAfter(date1, date2, period) {
   /* assumes 'day' and 'month' are the only valid periods */
   if (date1.year() !== date2.year()) {
-    return date1.year() > date2.year();
+    return date1.year() > date2.year()
   }
-  if (period === "year") {
-    return false;
+  if (period === 'year') {
+    return false
   }
   if (date1.month() !== date2.month()) {
-    return date1.month() > date2.month();
+    return date1.month() > date2.month()
   }
-  if (period === "month") {
-    return false;
+  if (period === 'month') {
+    return false
   }
   return date1.date() > date2.date()
 }

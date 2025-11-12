@@ -5,6 +5,7 @@ defmodule Plausible.Site do
   use Ecto.Schema
   use Plausible
   import Ecto.Changeset
+  import Ecto.Query, only: [from: 2]
   alias Plausible.Site.GoogleAuth
 
   @type t() :: %__MODULE__{}
@@ -14,14 +15,15 @@ defmodule Plausible.Site do
     field :domain, :string
     field :timezone, :string, default: "Etc/UTC"
     field :public, :boolean
-    field :locked, :boolean
     field :stats_start_date, :date
     field :native_stats_start_at, :naive_datetime
     field :allowed_event_props, {:array, :string}
     field :conversions_enabled, :boolean, default: true
     field :props_enabled, :boolean, default: true
     field :funnels_enabled, :boolean, default: true
-    field :scroll_depth_visible_at, :naive_datetime
+    field :legacy_time_on_page_cutoff, :date, default: ~D[1970-01-01]
+
+    field :consolidated, :boolean, default: false
 
     field :ingest_rate_limit_scale_seconds, :integer, default: 60
     # default is set via changeset/2
@@ -39,9 +41,7 @@ defmodule Plausible.Site do
     has_many :guest_memberships, Plausible.Teams.GuestMembership
     has_many :guest_invitations, Plausible.Teams.GuestInvitation
 
-    embeds_one :installation_meta, Plausible.Site.InstallationMeta,
-      on_replace: :update,
-      defaults_to_struct: true
+    has_one :tracker_script_configuration, Plausible.Site.TrackerScriptConfiguration
 
     has_many :goals, Plausible.Goal, preload_order: [desc: :id]
     has_many :revenue_goals, Plausible.Goal, where: [currency: {:not, nil}]
@@ -69,6 +69,10 @@ defmodule Plausible.Site do
     timestamps()
   end
 
+  def regular(q \\ __MODULE__) do
+    from s in q, where: not s.consolidated
+  end
+
   def new_for_team(team, params) do
     params
     |> new()
@@ -87,9 +91,15 @@ defmodule Plausible.Site do
     """
   end
 
+  on_ee do
+    @changeset_cast_fields [:domain, :consolidated, :timezone, :legacy_time_on_page_cutoff]
+  else
+    @changeset_cast_fields [:domain, :timezone, :legacy_time_on_page_cutoff]
+  end
+
   def changeset(site, attrs \\ %{}) do
     site
-    |> cast(attrs, [:domain, :timezone])
+    |> cast(attrs, @changeset_cast_fields)
     |> clean_domain()
     |> validate_required([:domain, :timezone])
     |> validate_timezone()
@@ -244,7 +254,7 @@ defmodule Plausible.Site do
   defp validate_timezone(changeset) do
     tz = get_field(changeset, :timezone)
 
-    if Timex.is_valid_timezone?(tz) do
+    if Plausible.Timezones.valid?(tz) do
       changeset
     else
       add_error(changeset, :timezone, "is invalid")

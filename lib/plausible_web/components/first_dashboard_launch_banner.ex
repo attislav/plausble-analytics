@@ -22,14 +22,14 @@ defmodule PlausibleWeb.Components.FirstDashboardLaunchBanner do
     <div
       x-cloak
       x-data={x_data(@site)}
-      class="w-full px-4 text-sm font-bold text-center text-blue-900 bg-blue-200 rounded transition"
+      class="w-full px-4 text-sm font-bold text-center text-blue-900 bg-blue-200 rounded-sm transition"
       style="top: 91px"
       role="alert"
       x-bind:class="! show ? 'hidden' : ''"
       x-init={x_init(@site)}
     >
       <.styled_link href={"/#{URI.encode_www_form(@site.domain)}/settings/email-reports"}>
-        Team members, email reports and GA import. Explore more →
+        Invite guests, enable email reports, import from GA and more →
       </.styled_link>
     </div>
     """

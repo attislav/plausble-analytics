@@ -3,40 +3,91 @@ defmodule PlausibleWeb.UserAuth do
   Functions for user session management.
   """
 
-  import Ecto.Query
+  use Plausible
 
   alias Plausible.Auth
-  alias Plausible.Repo
   alias PlausibleWeb.TwoFactor
 
   alias PlausibleWeb.Router.Helpers, as: Routes
 
   require Logger
 
-  @spec log_in_user(Plug.Conn.t(), Auth.User.t(), String.t() | nil) :: Plug.Conn.t()
-  def log_in_user(conn, user, redirect_path \\ nil) do
-    redirect_to =
-      if String.starts_with?(redirect_path || "", "/") do
-        redirect_path
-      else
-        Routes.site_path(conn, :index)
-      end
+  on_ee do
+    @type login_subject() :: Auth.User.t() | Auth.SSO.Identity.t()
+  else
+    @type login_subject() :: Auth.User.t()
+  end
+
+  @spec log_in_user(Plug.Conn.t(), login_subject(), String.t() | nil) ::
+          Plug.Conn.t()
+  def log_in_user(conn, subject, redirect_path \\ nil)
+
+  def log_in_user(conn, %Auth.User{} = user, redirect_path) do
+    redirect_to = login_redirect_path(conn, redirect_path)
+    device_name = get_device_name(conn)
+    session = Auth.UserSessions.create!(user, device_name)
 
     conn
-    |> set_user_session(user)
+    |> set_user_token(session.token)
     |> set_logged_in_cookie()
     |> Phoenix.Controller.redirect(to: redirect_to)
+  end
+
+  on_ee do
+    def log_in_user(conn, %Auth.SSO.Identity{} = identity, redirect_path) do
+      case Auth.SSO.provision_user(identity) do
+        {:ok, _provisioning_from, team, user} ->
+          redirect_to = login_redirect_path(conn, redirect_path)
+          device_name = get_device_name(conn)
+          session = Auth.UserSessions.create!(user, device_name, timeout_at: identity.expires_at)
+
+          conn
+          |> set_user_token(session.token)
+          |> Plug.Conn.put_session("current_team_id", team.identifier)
+          |> PlausibleWeb.LoginPreference.set_sso()
+          |> set_logged_in_cookie()
+          |> Phoenix.Controller.redirect(to: redirect_to)
+
+        {:error, :integration_not_found} ->
+          conn
+          |> log_out_user()
+          |> Phoenix.Controller.put_flash(:login_error, "Wrong email.")
+          |> Phoenix.Controller.redirect(
+            to: Routes.sso_path(conn, :login_form, return_to: redirect_path)
+          )
+
+        {:error, :over_limit} ->
+          error = "Team can't accept more members. Please contact the owner."
+
+          conn
+          |> log_out_user()
+          |> Phoenix.Controller.put_flash(:login_error, error)
+          |> Phoenix.Controller.redirect(
+            to: Routes.sso_path(conn, :login_form, return_to: redirect_path)
+          )
+
+        {:error, reason, _team, _user}
+        when reason in [:multiple_memberships, :active_personal_team] ->
+          issue = to_string(reason) <> "_noforce"
+
+          conn
+          |> log_out_user()
+          |> Phoenix.Controller.redirect(
+            to: Routes.sso_path(conn, :provision_issue, issue: issue)
+          )
+      end
+    end
   end
 
   @spec log_out_user(Plug.Conn.t()) :: Plug.Conn.t()
   def log_out_user(conn) do
     case get_user_token(conn) do
-      {:ok, token} -> remove_user_session(token)
+      {:ok, token} -> Auth.UserSessions.remove_by_token(token)
       {:error, _} -> :pass
     end
 
     if live_socket_id = Plug.Conn.get_session(conn, :live_socket_id) do
-      PlausibleWeb.Endpoint.broadcast(live_socket_id, "disconnect", %{})
+      Auth.UserSessions.disconnect_by_token(live_socket_id)
     end
 
     conn
@@ -45,68 +96,21 @@ defmodule PlausibleWeb.UserAuth do
   end
 
   @spec get_user_session(Plug.Conn.t() | map()) ::
-          {:ok, Auth.UserSession.t()} | {:error, :no_valid_token | :session_not_found}
+          {:ok, Auth.UserSession.t()}
+          | {:error, :no_valid_token | :session_not_found}
+          | {:error, :session_expired, Auth.UserSession.t()}
   def get_user_session(%Plug.Conn{assigns: %{current_user_session: user_session}}) do
     {:ok, user_session}
   end
 
   def get_user_session(conn_or_session) do
     with {:ok, token} <- get_user_token(conn_or_session) do
-      get_session_by_token(token)
-    end
-  end
-
-  @spec touch_user_session(Auth.UserSession.t(), NaiveDateTime.t()) :: Auth.UserSession.t()
-  def touch_user_session(user_session, now \\ NaiveDateTime.utc_now(:second)) do
-    if NaiveDateTime.diff(now, user_session.last_used_at, :hour) >= 1 do
-      Plausible.Users.bump_last_seen(user_session.user_id, now)
-
-      user_session
-      |> Auth.UserSession.touch_session(now)
-      |> Repo.update!(allow_stale: true)
-    else
-      user_session
-    end
-  end
-
-  @spec revoke_user_session(Auth.User.t(), pos_integer()) :: :ok
-  def revoke_user_session(user, session_id) do
-    {_, tokens} =
-      Repo.delete_all(
-        from us in Auth.UserSession,
-          where: us.user_id == ^user.id and us.id == ^session_id,
-          select: us.token
-      )
-
-    case tokens do
-      [token] ->
-        PlausibleWeb.Endpoint.broadcast(live_socket_id(token), "disconnect", %{})
-
-      _ ->
-        :pass
-    end
-
-    :ok
-  end
-
-  @spec revoke_all_user_sessions(Auth.User.t(), Keyword.t()) :: :ok
-  def revoke_all_user_sessions(user, opts \\ []) do
-    except = Keyword.get(opts, :except)
-
-    delete_query = from us in Auth.UserSession, where: us.user_id == ^user.id, select: us.token
-
-    delete_query =
-      if except do
-        where(delete_query, [us], us.id != ^except.id)
-      else
-        delete_query
+      case Auth.UserSessions.get_by_token(token) do
+        {:ok, session} -> {:ok, session}
+        {:error, :not_found} -> {:error, :session_not_found}
+        {:error, :expired, user_session} -> {:error, :session_expired, user_session}
       end
-
-    {_count, tokens} = Repo.delete_all(delete_query)
-
-    Enum.each(tokens, fn token ->
-      PlausibleWeb.Endpoint.broadcast(live_socket_id(token), "disconnect", %{})
-    end)
+    end
   end
 
   @doc """
@@ -124,47 +128,19 @@ defmodule PlausibleWeb.UserAuth do
     )
   end
 
-  defp get_session_by_token(token) do
-    now = NaiveDateTime.utc_now(:second)
-
-    last_team_subscription_query = Plausible.Teams.last_subscription_join_query()
-
-    token_query =
-      from(us in Auth.UserSession,
-        inner_join: u in assoc(us, :user),
-        as: :user,
-        left_join: tm in assoc(u, :team_memberships),
-        # NOTE: whenever my_team.subscription is used to prevent user action,
-        # we must check whether the team association is ownership.
-        # Otherwise regular members will be limited by team owner in cases
-        # like deleting their own account.
-        on: tm.role != :guest,
-        left_join: t in assoc(tm, :team),
-        as: :team,
-        left_join: o in assoc(t, :owners),
-        left_lateral_join: ts in subquery(last_team_subscription_query),
-        on: true,
-        where: us.token == ^token and us.timeout_at > ^now,
-        order_by: t.id,
-        preload: [user: {u, team_memberships: {tm, team: {t, subscription: ts, owners: o}}}]
-      )
-
-    case Repo.one(token_query) do
-      %Auth.UserSession{} = user_session ->
-        {:ok, user_session}
-
-      nil ->
-        {:error, :session_not_found}
-    end
-  end
-
-  defp set_user_session(conn, user) do
-    {token, _} = create_user_session(conn, user)
-
+  defp set_user_token(conn, token) do
     conn
     |> renew_session()
     |> TwoFactor.Session.clear_2fa_user()
     |> put_token_in_session(token)
+  end
+
+  defp login_redirect_path(conn, redirect_path) do
+    if String.starts_with?(redirect_path || "", "/") do
+      redirect_path
+    else
+      Routes.site_path(conn, :index)
+    end
   end
 
   defp renew_session(conn) do
@@ -182,11 +158,7 @@ defmodule PlausibleWeb.UserAuth do
   defp put_token_in_session(conn, token) do
     conn
     |> Plug.Conn.put_session(:user_token, token)
-    |> Plug.Conn.put_session(:live_socket_id, live_socket_id(token))
-  end
-
-  defp live_socket_id(token) do
-    "user_sessions:#{Base.url_encode64(token)}"
+    |> Plug.Conn.put_session(:live_socket_id, Auth.UserSessions.socket_id(token))
   end
 
   defp get_user_token(%Plug.Conn{} = conn) do
@@ -201,22 +173,6 @@ defmodule PlausibleWeb.UserAuth do
 
   defp get_user_token(_) do
     {:error, :no_valid_token}
-  end
-
-  defp create_user_session(conn, user) do
-    device_name = get_device_name(conn)
-
-    user_session =
-      user
-      |> Auth.UserSession.new_session(device_name)
-      |> Repo.insert!()
-
-    {user_session.token, user_session}
-  end
-
-  defp remove_user_session(token) do
-    Repo.delete_all(from us in Auth.UserSession, where: us.token == ^token)
-    :ok
   end
 
   @unknown_label "Unknown"

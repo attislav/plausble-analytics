@@ -22,6 +22,11 @@ defmodule PlausibleWeb.Api.SystemController do
   end
 
   @task_timeout 15_000
+  @critical_caches [
+    Plausible.Site.Cache,
+    Plausible.Shield.IPRuleCache,
+    PlausibleWeb.TrackerScriptCache
+  ]
   def readiness(conn, _params) do
     postgres_health_task =
       Task.async(fn ->
@@ -54,14 +59,20 @@ defmodule PlausibleWeb.Api.SystemController do
       end
 
     cache_health =
-      if postgres_health == "ok" and Plausible.Site.Cache.ready?() and
-           Plausible.Shield.IPRuleCache.ready?() do
+      if postgres_health == "ok" and Enum.all?(@critical_caches, & &1.ready?()) do
         "ok"
       end
 
+    sessions_health =
+      if Plausible.Session.Transfer.attempted?() do
+        "ok"
+      else
+        "waiting"
+      end
+
     status =
-      case {postgres_health, clickhouse_health, cache_health} do
-        {"ok", "ok", "ok"} -> 200
+      case {postgres_health, clickhouse_health, cache_health, sessions_health} do
+        {"ok", "ok", "ok", "ok"} -> 200
         _ -> 500
       end
 
@@ -69,7 +80,8 @@ defmodule PlausibleWeb.Api.SystemController do
     |> json(%{
       postgres: postgres_health,
       clickhouse: clickhouse_health,
-      sites_cache: cache_health
+      sites_cache: cache_health,
+      sessions: sessions_health
     })
   end
 end

@@ -5,7 +5,34 @@ defmodule PlausibleWeb.Components.Billing do
   use Plausible
 
   require Plausible.Billing.Subscription.Status
-  alias Plausible.Billing.{Subscription, Subscriptions}
+  alias Plausible.Billing.{Subscription, Subscriptions, Plan, Plans, EnterprisePlan}
+
+  attr :current_role, :atom, required: true
+  attr :current_team, :any, required: true
+  attr :locked?, :boolean, required: true
+  slot :inner_block, required: true
+
+  def feature_gate(assigns) do
+    ~H"""
+    <div id="feature-gate-inner-block-container" class={if(@locked?, do: "pointer-events-none")}>
+      {render_slot(@inner_block)}
+    </div>
+    <div
+      :if={@locked?}
+      id="feature-gate-overlay"
+      class="absolute backdrop-blur-[6px] bg-white/50 dark:bg-gray-800/50 inset-0 flex justify-center items-center rounded-md"
+    >
+      <div class="px-6 flex flex-col items-center text-gray-500 dark:text-gray-400">
+        <Heroicons.lock_closed solid class="size-8 mb-2" />
+
+        <span id="lock-notice" class="text-center max-w-sm sm:max-w-md">
+          To gain access to this feature,
+          <.upgrade_call_to_action current_role={@current_role} current_team={@current_team} />.
+        </span>
+      </div>
+    </div>
+    """
+  end
 
   def render_monthly_pageview_usage(%{usage: usage} = assigns)
       when is_map_key(usage, :last_30_days) do
@@ -151,7 +178,7 @@ defmodule PlausibleWeb.Components.Billing do
   def usage_and_limits_table(assigns) do
     ~H"""
     <table class="min-w-full text-gray-900 dark:text-gray-100" {@rest}>
-      <tbody class="divide-y divide-gray-200 dark:divide-gray-600">
+      <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
         {render_slot(@inner_block)}
       </tbody>
     </table>
@@ -171,8 +198,8 @@ defmodule PlausibleWeb.Components.Billing do
         {@title}
       </td>
       <td class="text-sm py-4 sm:whitespace-nowrap text-right">
-        {Cldr.Number.to_string!(@usage)}
-        {if is_number(@limit), do: "/ #{Cldr.Number.to_string!(@limit)}"}
+        {PlausibleWeb.TextHelpers.number_format(@usage)}
+        {if is_number(@limit), do: "/ #{PlausibleWeb.TextHelpers.number_format(@limit)}"}
       </td>
     </tr>
     """
@@ -182,7 +209,7 @@ defmodule PlausibleWeb.Components.Billing do
     ~H"""
     <div
       id="monthly-quota-box"
-      class="w-full md:w-1/3 h-32 px-2 py-4 my-4 text-center bg-gray-100 rounded dark:bg-gray-900 w-max-md"
+      class="w-full flex-1 h-32 px-2 py-4 text-center bg-gray-100 rounded-sm dark:bg-gray-800 w-max-md"
     >
       <h4 class="font-black dark:text-gray-100">Monthly quota</h4>
       <div class="py-2 text-xl font-medium dark:text-gray-100">
@@ -233,27 +260,23 @@ defmodule PlausibleWeb.Components.Billing do
   slot :inner_block, required: true
 
   def paddle_button(assigns) do
+    js_action_expr =
+      start_paddle_checkout_expr(assigns.paddle_product_id, assigns.team, assigns.user)
+
     confirmed =
       if assigns.confirm_message, do: "confirm(\"#{assigns.confirm_message}\")", else: "true"
-
-    passthrough =
-      if assigns.team do
-        "ee:#{ee?()};user:#{assigns.user.id};team:#{assigns.team.id}"
-      else
-        "ee:#{ee?()};user:#{assigns.user.id}"
-      end
 
     assigns =
       assigns
       |> assign(:confirmed, confirmed)
-      |> assign(:passthrough, passthrough)
+      |> assign(:js_action_expr, js_action_expr)
 
     ~H"""
     <button
       id={@id}
-      onclick={"if (#{@confirmed}) {Paddle.Checkout.open(#{Jason.encode!(%{product: @paddle_product_id, email: @user.email, disableLogout: true, passthrough: @passthrough, success: Routes.billing_path(PlausibleWeb.Endpoint, :upgrade_success), theme: "none"})})}"}
+      onclick={"if (#{@confirmed}) {#{@js_action_expr}}"}
       class={[
-        "text-sm w-full mt-6 block rounded-md py-2 px-3 text-center font-semibold leading-6 text-white",
+        "text-sm w-full mt-6 block rounded-md py-2 px-3 text-center font-semibold leading-6 text-white transition-colors duration-150",
         !@checkout_disabled && "bg-indigo-600 hover:bg-indigo-500",
         @checkout_disabled && "pointer-events-none bg-gray-400 dark:bg-gray-600"
       ]}
@@ -263,22 +286,55 @@ defmodule PlausibleWeb.Components.Billing do
     """
   end
 
-  def paddle_script(assigns) do
-    ~H"""
-    <script type="text/javascript" src="https://cdn.paddle.com/paddle/paddle.js">
-    </script>
-    <script :if={Application.get_env(:plausible, :environment) in ["dev", "staging"]}>
-      Paddle.Environment.set('sandbox')
-    </script>
-    <script>
-      Paddle.Setup({vendor: <%= Application.get_env(:plausible, :paddle) |> Keyword.fetch!(:vendor_id) %> })
-    </script>
-    """
+  if Mix.env() == :dev do
+    def start_paddle_checkout_expr(paddle_product_id, _team, _user) do
+      "window.location = '#{Routes.dev_subscription_path(PlausibleWeb.Endpoint, :create_form, paddle_product_id)}'"
+    end
+
+    def paddle_script(assigns), do: ~H""
+  else
+    def start_paddle_checkout_expr(paddle_product_id, team, user) do
+      passthrough =
+        if team do
+          "ee:#{ee?()};user:#{user.id};team:#{team.id}"
+        else
+          "ee:#{ee?()};user:#{user.id}"
+        end
+
+      paddle_checkout_params =
+        Jason.encode!(%{
+          product: paddle_product_id,
+          email: user.email,
+          disableLogout: true,
+          passthrough: passthrough,
+          success: Routes.billing_path(PlausibleWeb.Endpoint, :upgrade_success),
+          theme: "none"
+        })
+
+      "Paddle.Checkout.open(#{paddle_checkout_params})"
+    end
+
+    def paddle_script(assigns) do
+      ~H"""
+      <script type="text/javascript" src="https://cdn.paddle.com/paddle/paddle.js">
+      </script>
+      <script :if={Application.get_env(:plausible, :environment) == "staging"}>
+        Paddle.Environment.set('sandbox')
+      </script>
+      <script>
+        Paddle.Setup({vendor: <%= Application.get_env(:plausible, :paddle) |> Keyword.fetch!(:vendor_id) %> })
+      </script>
+      """
+    end
   end
 
   def upgrade_link(assigns) do
     ~H"""
-    <.button_link id="upgrade-link-2" href={Routes.billing_path(PlausibleWeb.Endpoint, :choose_plan)}>
+    <.button_link
+      id="upgrade-link-2"
+      href={Routes.billing_path(PlausibleWeb.Endpoint, :choose_plan)}
+      mt?={false}
+    >
       Upgrade
     </.button_link>
     """
@@ -290,4 +346,37 @@ defmodule PlausibleWeb.Components.Billing do
     do: "Upgrade"
 
   defp change_plan_or_upgrade_text(_subscription), do: "Change plan"
+
+  def upgrade_call_to_action(assigns) do
+    team = Plausible.Teams.with_subscription(assigns.current_team)
+
+    upgrade_assistance_required? =
+      case Plans.get_subscription_plan(team && team.subscription) do
+        %Plan{kind: :business} -> true
+        %EnterprisePlan{} -> true
+        _ -> false
+      end
+
+    cond do
+      not is_nil(assigns.current_role) and assigns.current_role not in [:owner, :billing] ->
+        ~H"please reach out to the team owner to upgrade their subscription"
+
+      upgrade_assistance_required? ->
+        ~H"""
+        please contact <a href="mailto:hello@plausible.io" class="underline">hello@plausible.io</a>
+        to upgrade your subscription
+        """
+
+      true ->
+        ~H"""
+        please
+        <.link
+          class="underline inline-block"
+          href={Routes.billing_path(PlausibleWeb.Endpoint, :choose_plan)}
+        >
+          upgrade your subscription
+        </.link>
+        """
+    end
+  end
 end

@@ -21,17 +21,23 @@ defmodule Plausible.Billing.EnterprisePlan do
     field :monthly_pageview_limit, :integer
     field :site_limit, :integer
     field :team_member_limit, Plausible.Billing.Ecto.Limit
-    field :features, Plausible.Billing.Ecto.FeatureList, default: []
+    field :features, {:array, Plausible.Billing.Ecto.Feature}, default: []
     field :hourly_api_request_limit, :integer
+    field :managed_proxy_price_modifier, :boolean, default: false, virtual: true
 
     belongs_to :team, Plausible.Teams.Team
 
     timestamps()
   end
 
+  @max round(:math.pow(2, 31))
+
   def changeset(model, attrs \\ %{}) do
     model
     |> cast(attrs, @required_fields)
+    |> validate_number(:monthly_pageview_limit, less_than: @max)
+    |> validate_number(:site_limit, less_than: @max)
+    |> validate_number(:hourly_api_request_limit, less_than: @max)
     |> validate_required(@required_fields)
   end
 end

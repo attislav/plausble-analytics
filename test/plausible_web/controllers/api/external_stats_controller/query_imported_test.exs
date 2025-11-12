@@ -344,7 +344,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryImportedTest do
       insert(:site_import,
         site: site,
         start_date: ~D[2005-01-01],
-        end_date: Timex.today(),
+        end_date: Date.utc_today(),
         source: :universal_analytics
       )
 
@@ -401,7 +401,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryImportedTest do
       insert(:site_import,
         site: site,
         start_date: ~D[2005-01-01],
-        end_date: Timex.today(),
+        end_date: Date.utc_today(),
         source: :universal_analytics
       )
 
@@ -460,7 +460,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryImportedTest do
       insert(:site_import,
         site: site,
         start_date: ~D[2005-01-01],
-        end_date: Timex.today(),
+        end_date: Date.utc_today(),
         source: :universal_analytics
       )
 
@@ -681,7 +681,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryImportedTest do
                breakdown_and_first.("visit:source")
     end
 
-    for goal_name <- Plausible.Imported.goals_with_url() do
+    for goal_name <- Plausible.Goals.SystemGoals.goals_with_url() do
       test "returns url breakdown for #{goal_name} goal", %{conn: conn, site: site} do
         insert(:goal, event_name: unquote(goal_name), site: site)
         site_import = insert(:site_import, site: site)
@@ -734,7 +734,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryImportedTest do
       end
     end
 
-    for goal_name <- Plausible.Imported.goals_with_path() do
+    for goal_name <- Plausible.Goals.SystemGoals.goals_with_path() do
       test "returns path breakdown for #{goal_name} goal", %{conn: conn, site: site} do
         insert(:goal, event_name: unquote(goal_name), site: site)
         site_import = insert(:site_import, site: site)
@@ -1388,7 +1388,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryImportedTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors", "scroll_depth"],
           "date_range" => "all",
@@ -1476,7 +1476,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryImportedTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors", "scroll_depth"],
           "date_range" => "all",
@@ -1510,7 +1510,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryImportedTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors", "scroll_depth"],
           "date_range" => ["2022-01-01", "2022-01-31"],
@@ -1554,7 +1554,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController.QueryImportedTest do
       ])
 
       conn =
-        post(conn, "/api/v2/query-internal-test", %{
+        post(conn, "/api/v2/query", %{
           "site_id" => site.domain,
           "metrics" => ["visitors", "scroll_depth"],
           "date_range" => "all",

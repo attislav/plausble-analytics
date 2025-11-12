@@ -2,6 +2,8 @@ defmodule PlausibleWeb.Api.ExternalStatsController.AuthTest do
   use PlausibleWeb.ConnCase
   use Plausible.Teams.Test
 
+  alias Plausible.Repo
+
   setup [:create_user, :create_api_key]
 
   test "unauthenticated request - returns 401", %{conn: conn} do
@@ -47,7 +49,8 @@ defmodule PlausibleWeb.Api.ExternalStatsController.AuthTest do
   end
 
   test "locked site - returns 402", %{conn: conn, api_key: api_key, user: user} do
-    site = new_site(owner: user, locked: true)
+    site = new_site(owner: user)
+    site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
 
     conn
     |> with_api_key(api_key)
@@ -88,7 +91,8 @@ defmodule PlausibleWeb.Api.ExternalStatsController.AuthTest do
       api_key: api_key,
       user: user
     } do
-      site = new_site(owner: user, locked: true)
+      site = new_site(owner: user)
+      site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
 
       conn
       |> with_api_key(api_key)
@@ -100,23 +104,30 @@ defmodule PlausibleWeb.Api.ExternalStatsController.AuthTest do
   end
 
   test "limits the rate of API requests", %{user: user} do
-    api_key = insert(:api_key, user_id: user.id, hourly_request_limit: 3)
+    site = new_site(owner: user)
+
+    user
+    |> team_of()
+    |> Ecto.Changeset.change(hourly_api_request_limit: 3)
+    |> Plausible.Repo.update!()
+
+    api_key = insert(:api_key, user_id: user.id)
 
     build_conn()
     |> with_api_key(api_key.key)
-    |> get("/api/v1/stats/aggregate")
+    |> get("/api/v1/stats/aggregate", %{"site_id" => site.domain})
 
     build_conn()
     |> with_api_key(api_key.key)
-    |> get("/api/v1/stats/aggregate")
+    |> get("/api/v1/stats/aggregate", %{"site_id" => site.domain})
 
     build_conn()
     |> with_api_key(api_key.key)
-    |> get("/api/v1/stats/aggregate")
+    |> get("/api/v1/stats/aggregate", %{"site_id" => site.domain})
 
     build_conn()
     |> with_api_key(api_key.key)
-    |> get("/api/v1/stats/aggregate")
+    |> get("/api/v1/stats/aggregate", %{"site_id" => site.domain})
     |> assert_error(
       429,
       "Too many API requests. Your API key is limited to 3 requests per hour."

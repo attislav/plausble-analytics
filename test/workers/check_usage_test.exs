@@ -10,7 +10,7 @@ defmodule Plausible.Workers.CheckUsageTest do
 
   setup [:create_user, :create_site]
   @paddle_id_10k "558018"
-  @date_range Date.range(Timex.today(), Timex.today())
+  @date_range Date.range(Date.utc_today(), Date.utc_today())
 
   @accepted_status_values [
     Plausible.Billing.Subscription.Status.active(),
@@ -96,11 +96,55 @@ defmodule Plausible.Workers.CheckUsageTest do
     )
   end
 
+  test "sends emails to billing members if available", %{user: user} do
+    usage_stub =
+      Plausible.Teams.Billing
+      |> stub(:monthly_pageview_usage, fn _user ->
+        %{
+          penultimate_cycle: %{date_range: @date_range, total: 11_000},
+          last_cycle: %{date_range: @date_range, total: 11_000}
+        }
+      end)
+
+    user2 = new_user()
+    user3 = new_user()
+    new_site(owner: user)
+    team = team_of(user)
+
+    add_member(team, user: user2, role: :billing)
+    add_member(team, user: user3, role: :viewer)
+
+    subscribe_to_plan(
+      user,
+      @paddle_id_10k,
+      last_bill_date: Date.shift(Date.utc_today(), day: -1),
+      next_bill_date: Date.shift(Date.utc_today(), day: +5),
+      status: :active
+    )
+
+    CheckUsage.perform(nil, usage_stub)
+
+    assert_email_delivered_with(
+      to: [user],
+      subject: "[Action required] You have outgrown your Plausible subscription tier"
+    )
+
+    assert_email_delivered_with(
+      to: [user2],
+      subject: "[Action required] You have outgrown your Plausible subscription tier"
+    )
+
+    refute_email_delivered_with(
+      to: [user3],
+      subject: "[Action required] You have outgrown your Plausible subscription tier"
+    )
+  end
+
   test "ignores user with paused subscription", %{user: user} do
     subscribe_to_plan(
       user,
       @paddle_id_10k,
-      last_bill_date: Timex.shift(Timex.today(), days: -1),
+      last_bill_date: Date.shift(Date.utc_today(), day: -1),
       status: Plausible.Billing.Subscription.Status.paused()
     )
 
@@ -113,7 +157,7 @@ defmodule Plausible.Workers.CheckUsageTest do
     describe "#{status} subscription, regular customers" do
       test "ignores user with subscription but no usage", %{user: user} do
         subscribe_to_plan(user, @paddle_id_10k,
-          last_bill_date: Timex.shift(Timex.today(), days: -1),
+          last_bill_date: Date.shift(Date.utc_today(), day: -1),
           status: unquote(status)
         )
 
@@ -136,7 +180,7 @@ defmodule Plausible.Workers.CheckUsageTest do
           end)
 
         subscribe_to_plan(user, @paddle_id_10k,
-          last_bill_date: Timex.shift(Timex.today(), days: -1),
+          last_bill_date: Date.shift(Date.utc_today(), day: -1),
           status: unquote(status)
         )
 
@@ -159,7 +203,7 @@ defmodule Plausible.Workers.CheckUsageTest do
           end)
 
         subscribe_to_plan(user, @paddle_id_10k,
-          last_bill_date: Timex.shift(Timex.today(), days: -1),
+          last_bill_date: Date.shift(Date.utc_today(), day: -1),
           status: unquote(status)
         )
 
@@ -197,7 +241,7 @@ defmodule Plausible.Workers.CheckUsageTest do
         )
 
         assert Repo.reload(team_of(user)).grace_period.end_date ==
-                 Timex.shift(Timex.today(), days: 7)
+                 Date.shift(Date.utc_today(), day: 7)
       end
 
       test "sends an email suggesting enterprise plan when usage is greater than 10M ", %{
@@ -215,7 +259,7 @@ defmodule Plausible.Workers.CheckUsageTest do
         subscribe_to_plan(
           user,
           @paddle_id_10k,
-          last_bill_date: Timex.shift(Timex.today(), days: -1),
+          last_bill_date: Date.shift(Date.utc_today(), day: -1),
           status: unquote(status)
         )
 
@@ -240,7 +284,7 @@ defmodule Plausible.Workers.CheckUsageTest do
           end)
 
         subscribe_to_plan(user, @paddle_id_10k,
-          last_bill_date: Timex.shift(Timex.today(), days: -1),
+          last_bill_date: Date.shift(Date.utc_today(), day: -1),
           status: unquote(status)
         )
 
@@ -265,7 +309,7 @@ defmodule Plausible.Workers.CheckUsageTest do
         subscribe_to_plan(
           user,
           @paddle_id_10k,
-          last_bill_date: Timex.shift(Timex.today(), days: -1),
+          last_bill_date: Date.shift(Date.utc_today(), day: -1),
           status: unquote(status)
         )
 
@@ -275,7 +319,7 @@ defmodule Plausible.Workers.CheckUsageTest do
           html_body: html_body
         })
 
-        assert html_body =~ "We recommend you upgrade to the 100k/mo plan"
+        assert html_body =~ "We recommend you upgrade to the 100k pageviews/month plan"
       end
 
       test "clears grace period when plan is applicable again", %{user: user} do
@@ -331,7 +375,7 @@ defmodule Plausible.Workers.CheckUsageTest do
         subscribe_to_enterprise_plan(user,
           monthly_pageview_limit: 1_000_000,
           subscription: [
-            last_bill_date: Timex.shift(Timex.today(), days: -1),
+            last_bill_date: Date.shift(Date.utc_today(), day: -1),
             status: unquote(status)
           ]
         )
@@ -359,7 +403,7 @@ defmodule Plausible.Workers.CheckUsageTest do
           user,
           monthly_pageview_limit: 1_000_000,
           subscription: [
-            last_bill_date: Timex.shift(Timex.today(), days: -1),
+            last_bill_date: Date.shift(Date.utc_today(), day: -1),
             status: unquote(status)
           ]
         )
@@ -389,7 +433,7 @@ defmodule Plausible.Workers.CheckUsageTest do
           user,
           monthly_pageview_limit: 1_000_000,
           subscription: [
-            last_bill_date: Timex.shift(Timex.today(), days: -1),
+            last_bill_date: Date.shift(Date.utc_today(), day: -1),
             status: unquote(status),
             # non-matching ID
             paddle_plan_id: @paddle_id_10k
@@ -420,7 +464,7 @@ defmodule Plausible.Workers.CheckUsageTest do
         subscribe_to_enterprise_plan(user,
           site_limit: 2,
           subscription: [
-            last_bill_date: Timex.shift(Timex.today(), days: -1),
+            last_bill_date: Date.shift(Date.utc_today(), day: -1),
             status: unquote(status)
           ]
         )
@@ -451,7 +495,7 @@ defmodule Plausible.Workers.CheckUsageTest do
           user,
           monthly_pageview_limit: 1_000_000,
           subscription: [
-            last_bill_date: Timex.shift(Timex.today(), days: -1),
+            last_bill_date: Date.shift(Date.utc_today(), day: -1),
             status: unquote(status)
           ]
         )

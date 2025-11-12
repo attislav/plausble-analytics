@@ -35,7 +35,7 @@ defmodule PlausibleWeb.Endpoint do
   #
   # You should set gzip to true if you are running phx.digest
   # when deploying your static files in production.
-  plug(PlausibleWeb.Tracker)
+  plug(PlausibleWeb.TrackerPlug)
   plug(PlausibleWeb.Favicon)
 
   static_paths = ~w(css js images favicon.ico)
@@ -49,7 +49,7 @@ defmodule PlausibleWeb.Endpoint do
     end
 
   static_compression =
-    if Plausible.ce?() do
+    if ce?() do
       [brotli: true, gzip: true]
     else
       [gzip: false]
@@ -59,15 +59,6 @@ defmodule PlausibleWeb.Endpoint do
     Plug.Static,
     [at: "/", from: :plausible, only: static_paths] ++ static_compression
   )
-
-  on_ee do
-    plug(Plug.Static,
-      at: "/kaffy",
-      from: :kaffy,
-      gzip: false,
-      only: ~w(assets)
-    )
-  end
 
   # Code reloading can be explicitly enabled under the
   # :code_reloader configuration of your endpoint.

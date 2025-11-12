@@ -11,7 +11,7 @@ defmodule PlausibleWeb.Api.ExternalController do
   alias Plausible.Ingestion
 
   def event(conn, _params) do
-    with {:ok, request} <- Ingestion.Request.build(conn),
+    with {:ok, request, conn} <- Ingestion.Request.build(conn),
          _ <- Sentry.Context.set_extra_context(%{request: request}) do
       case Ingestion.Event.build_and_buffer(request) do
         {:ok, %{dropped: [], buffered: _buffered}} ->
@@ -26,7 +26,9 @@ defmodule PlausibleWeb.Api.ExternalController do
             conn
             |> put_resp_header("x-plausible-dropped", "#{Enum.count(dropped)}")
             |> put_status(400)
-            |> json(%{errors: Plausible.ChangesetHelpers.traverse_errors(first_invalid_changeset)})
+            |> json(%{
+              errors: Plausible.ChangesetHelpers.traverse_errors(first_invalid_changeset)
+            })
           else
             conn
             |> put_resp_header("x-plausible-dropped", "#{Enum.count(dropped)}")

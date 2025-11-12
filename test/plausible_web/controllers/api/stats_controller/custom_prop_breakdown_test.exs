@@ -179,13 +179,13 @@ defmodule PlausibleWeb.Api.StatsController.CustomPropBreakdownTest do
                  "visitors" => 2,
                  "name" => "B",
                  "events" => 2,
-                 "conversion_rate" => 33.3
+                 "conversion_rate" => 33.33
                },
                %{
                  "visitors" => 1,
                  "name" => "A",
                  "events" => 1,
-                 "conversion_rate" => 16.7
+                 "conversion_rate" => 16.67
                }
              ]
     end
@@ -215,13 +215,13 @@ defmodule PlausibleWeb.Api.StatsController.CustomPropBreakdownTest do
                  "visitors" => 2,
                  "name" => "(none)",
                  "events" => 2,
-                 "conversion_rate" => 33.3
+                 "conversion_rate" => 33.33
                },
                %{
                  "visitors" => 1,
                  "name" => "A",
                  "events" => 1,
-                 "conversion_rate" => 16.7
+                 "conversion_rate" => 16.67
                }
              ]
     end
@@ -809,7 +809,7 @@ defmodule PlausibleWeb.Api.StatsController.CustomPropBreakdownTest do
                  "visitors" => 2,
                  "name" => "true",
                  "events" => 2,
-                 "conversion_rate" => 66.7,
+                 "conversion_rate" => 66.67,
                  "total_revenue" => %{
                    "long" => "€112.00",
                    "short" => "€112.0",
@@ -827,7 +827,7 @@ defmodule PlausibleWeb.Api.StatsController.CustomPropBreakdownTest do
                  "visitors" => 1,
                  "name" => "false",
                  "events" => 1,
-                 "conversion_rate" => 33.3,
+                 "conversion_rate" => 33.33,
                  "total_revenue" => %{
                    "long" => "€8.00",
                    "short" => "€8.0",
@@ -893,7 +893,7 @@ defmodule PlausibleWeb.Api.StatsController.CustomPropBreakdownTest do
                  "visitors" => 2,
                  "name" => "true",
                  "events" => 2,
-                 "conversion_rate" => 66.7,
+                 "conversion_rate" => 66.67,
                  "total_revenue" => %{
                    "long" => "€80.00",
                    "short" => "€80.0",
@@ -911,7 +911,7 @@ defmodule PlausibleWeb.Api.StatsController.CustomPropBreakdownTest do
                  "visitors" => 1,
                  "name" => "false",
                  "events" => 1,
-                 "conversion_rate" => 33.3,
+                 "conversion_rate" => 33.33,
                  "total_revenue" => %{
                    "long" => "€10.00",
                    "short" => "€10.0",
@@ -1261,7 +1261,7 @@ defmodule PlausibleWeb.Api.StatsController.CustomPropBreakdownTest do
              ]
     end
 
-    for goal_name <- Plausible.Imported.goals_with_path() do
+    for goal_name <- Plausible.Goals.SystemGoals.goals_with_path() do
       test "returns path breakdown for #{goal_name} goal", %{conn: conn, site: site} do
         insert(:goal, event_name: unquote(goal_name), site: site)
         site_import = insert(:site_import, site: site)
@@ -1320,7 +1320,7 @@ defmodule PlausibleWeb.Api.StatsController.CustomPropBreakdownTest do
       end
     end
 
-    for goal_name <- Plausible.Imported.goals_with_url() do
+    for goal_name <- Plausible.Goals.SystemGoals.goals_with_url() do
       test "returns url breakdown for #{goal_name} goal", %{conn: conn, site: site} do
         insert(:goal, event_name: unquote(goal_name), site: site)
         site_import = insert(:site_import, site: site)

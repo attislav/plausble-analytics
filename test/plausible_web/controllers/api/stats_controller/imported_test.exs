@@ -1,6 +1,5 @@
 defmodule PlausibleWeb.Api.StatsController.ImportedTest do
   use PlausibleWeb.ConnCase
-  use Timex
 
   @user_id Enum.random(1000..9999)
 
@@ -19,7 +18,7 @@ defmodule PlausibleWeb.Api.StatsController.ImportedTest do
           %{
             source: :google_analytics_4,
             start_date: ~D[2005-01-01],
-            end_date: Timex.today(),
+            end_date: Date.utc_today(),
             legacy: unquote(import_type) == :new_and_legacy
           }
 
@@ -787,8 +786,6 @@ defmodule PlausibleWeb.Api.StatsController.ImportedTest do
         site: site,
         import_id: import_id
       } do
-        Plausible.Sites.set_scroll_depth_visible_at(site)
-
         populate_stats(site, [
           build(:pageview,
             pathname: "/",
@@ -881,7 +878,7 @@ defmodule PlausibleWeb.Api.StatsController.ImportedTest do
         assert json_response(conn, 200)["results"] == [
                  %{
                    "bounce_rate" => 0,
-                   "time_on_page" => 40,
+                   "time_on_page" => 60,
                    "visitors" => 3,
                    "pageviews" => 4,
                    "scroll_depth" => nil,
@@ -889,7 +886,7 @@ defmodule PlausibleWeb.Api.StatsController.ImportedTest do
                  },
                  %{
                    "bounce_rate" => 25.0,
-                   "time_on_page" => 800.0,
+                   "time_on_page" => 700,
                    "visitors" => 2,
                    "pageviews" => 2,
                    "scroll_depth" => nil,

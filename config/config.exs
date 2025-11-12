@@ -26,22 +26,20 @@ config :esbuild,
   ]
 
 config :tailwind,
-  version: "3.4.7",
+  version: "4.1.12",
   default: [
     args: ~w(
-      --config=tailwind.config.js
-      --input=css/app.css
-      --output=../priv/static/css/app.css
+      --input=assets/css/app.css
+      --output=priv/static/css/app.css
     ),
-    cd: Path.expand("../assets", __DIR__)
+    cd: Path.expand("..", __DIR__)
   ],
   storybook: [
     args: ~w(
-    --config=tailwind.config.js
-    --input=css/storybook.css
-    --output=../priv/static/css/storybook.css
+    --input=assets/css/storybook.css
+    --output=priv/static/css/storybook.css
   ),
-    cd: Path.expand("../assets", __DIR__)
+    cd: Path.expand("..", __DIR__)
   ]
 
 config :ua_inspector,
@@ -71,7 +69,9 @@ config :plausible, Plausible.ClickhouseRepo, loggers: [Ecto.LogEntry]
 config :plausible, Plausible.Repo,
   timeout: 300_000,
   connect_timeout: 300_000,
-  handshake_timeout: 300_000
+  handshake_timeout: 300_000,
+  queue_target: 500,
+  queue_inerval: 1100
 
 config :plausible, Plausible.Cache, enabled: true
 
@@ -84,5 +84,8 @@ config :ex_cldr,
 config :sentry,
   enable_source_code_context: true,
   root_source_code_path: [File.cwd!()]
+
+config :prom_ex, :storage_adapter, Plausible.PromEx.StripedPeep
+config :peep, :bucket_calculator, Plausible.PromEx.Buckets
 
 import_config "#{config_env()}.exs"

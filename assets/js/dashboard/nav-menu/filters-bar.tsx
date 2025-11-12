@@ -1,5 +1,3 @@
-/** @format */
-
 import { EllipsisHorizontalIcon } from '@heroicons/react/24/solid'
 import classNames from 'classnames'
 import React, { useRef, useState, useLayoutEffect } from 'react'
@@ -7,8 +5,10 @@ import { AppliedFilterPillsList, PILL_X_GAP_PX } from './filter-pills-list'
 import { useQueryContext } from '../query-context'
 import { AppNavigationLink } from '../navigation/use-app-navigate'
 import { Popover, Transition } from '@headlessui/react'
-import { popover } from '../components/popover'
-import { BlurMenuButtonOnEscape } from '../keybinding'
+import { popover, BlurMenuButtonOnEscape } from '../components/popover'
+import { isSegmentFilter } from '../filtering/segments'
+import { useRoutelessModalsContext } from '../navigation/routeless-modals-context'
+import { DashboardQuery } from '../query'
 
 // Component structure is
 // `..[ filter (x) ]..[ filter (x) ]..[ three dot menu ]..`
@@ -25,13 +25,15 @@ export const handleVisibility = ({
   leftoverWidth,
   seeMoreWidth,
   pillWidths,
-  pillGap
+  pillGap,
+  mustShowSeeMoreMenu
 }: {
   setVisibility: (v: VisibilityState) => void
   leftoverWidth: number | null
   pillWidths: (number | null)[] | null
   seeMoreWidth: number
   pillGap: number
+  mustShowSeeMoreMenu: boolean
 }): void => {
   if (leftoverWidth === null || pillWidths === null) {
     return
@@ -56,7 +58,7 @@ export const handleVisibility = ({
   const fits = fitToWidth(leftoverWidth)
 
   const seeMoreWillBePresent =
-    fits.visibleCount < pillWidths.length || pillWidths.length > 1
+    fits.visibleCount < pillWidths.length || mustShowSeeMoreMenu
 
   // Check if the appearance of "See more" would cause overflow
   if (seeMoreWillBePresent) {
@@ -104,12 +106,34 @@ interface FiltersBarProps {
   }
 }
 
+const canShowClearAllAction = ({
+  filters
+}: Pick<DashboardQuery, 'filters'>): boolean => filters.length >= 2
+
+const canShowSaveAsSegmentAction = ({
+  filters,
+  isEditingSegment
+}: Pick<DashboardQuery, 'filters'> & { isEditingSegment: boolean }): boolean =>
+  filters.length >= 1 && !filters.some(isSegmentFilter) && !isEditingSegment
+
 export const FiltersBar = ({ accessors }: FiltersBarProps) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const pillsRef = useRef<HTMLDivElement>(null)
   const [visibility, setVisibility] = useState<null | VisibilityState>(null)
-  const { query } = useQueryContext()
-  const seeMoreRef = useRef<HTMLButtonElement>(null)
+  const { query, expandedSegment } = useQueryContext()
+
+  const showingClearAll = canShowClearAllAction({ filters: query.filters })
+  const showingSaveAsSegment = canShowSaveAsSegmentAction({
+    filters: query.filters,
+    isEditingSegment: !!expandedSegment
+  })
+
+  const actionsInSeeMoreMenu = [
+    showingSaveAsSegment && ('save as segment' as const),
+    showingClearAll && ('clear all filters' as const)
+  ].filter((f) => f)
+
+  const mustShowSeeMoreMenu = actionsInSeeMoreMenu.length > 0
 
   useLayoutEffect(() => {
     const topBar = accessors.topBar(containerRef.current)
@@ -135,7 +159,10 @@ export const FiltersBar = ({ accessors }: FiltersBarProps) => {
               BUFFER_RIGHT_PX
             : null,
         seeMoreWidth:
-          SEE_MORE_LEFT_MARGIN_PX + SEE_MORE_WIDTH_PX + SEE_MORE_RIGHT_MARGIN_PX
+          SEE_MORE_LEFT_MARGIN_PX +
+          SEE_MORE_WIDTH_PX +
+          SEE_MORE_RIGHT_MARGIN_PX,
+        mustShowSeeMoreMenu
       })
     })
 
@@ -146,14 +173,12 @@ export const FiltersBar = ({ accessors }: FiltersBarProps) => {
     return () => {
       resizeObserver.disconnect()
     }
-  }, [accessors, query.filters])
+  }, [accessors, query.filters, mustShowSeeMoreMenu])
 
   if (!query.filters.length) {
     // functions as spacer between elements.leftSection and elements.rightSection
     return <div className="w-4" />
   }
-
-  const canClear = query.filters.length > 1
 
   return (
     <div
@@ -178,64 +203,142 @@ export const FiltersBar = ({ accessors }: FiltersBarProps) => {
         />
       </div>
       {visibility !== null &&
-        (query.filters.length !== visibility.visibleCount || canClear) && (
-          <Popover className="md:relative">
-            <BlurMenuButtonOnEscape targetRef={seeMoreRef} />
-            <Popover.Button
-              title="See more"
-              ref={seeMoreRef}
-              className={classNames(
-                popover.toggleButton.classNames.rounded,
-                popover.toggleButton.classNames.shadow,
-                'justify-center'
-              )}
-              style={{
-                height: SEE_MORE_WIDTH_PX,
-                width: SEE_MORE_WIDTH_PX,
-                marginLeft: SEE_MORE_LEFT_MARGIN_PX,
-                marginRight: SEE_MORE_RIGHT_MARGIN_PX
-              }}
-            >
-              <EllipsisHorizontalIcon className="block h-5 w-5" />
-            </Popover.Button>
-            <Transition
-              {...popover.transition.props}
-              className={classNames(
-                'mt-2',
-                popover.transition.classNames.fullwidth,
-                'md:right-auto'
-              )}
-            >
-              <Popover.Panel
-                className={classNames(
-                  popover.panel.classNames.roundedSheet,
-                  'flex flex-col p-4 gap-y-2'
-                )}
-              >
-                {query.filters.length !== visibility.visibleCount && (
-                  <AppliedFilterPillsList
-                    direction="vertical"
-                    slice={{
-                      type: 'no-render-outside',
-                      start: visibility.visibleCount
-                    }}
-                  />
-                )}
-                {canClear && <ClearAction />}
-              </Popover.Panel>
-            </Transition>
-          </Popover>
+        (query.filters.length !== visibility.visibleCount ||
+          mustShowSeeMoreMenu) && (
+          <SeeMoreMenu
+            actions={actionsInSeeMoreMenu}
+            className="md:relative"
+            filtersCount={query.filters.length}
+            visibleFiltersCount={visibility.visibleCount}
+          />
         )}
     </div>
   )
 }
 
-const ClearAction = () => (
+const SeeMoreMenu = ({
+  className,
+  filtersCount,
+  visibleFiltersCount,
+  actions
+}: {
+  className?: string
+  filtersCount: number
+  visibleFiltersCount: number
+  actions: Array<'save as segment' | 'clear all filters' | false>
+}) => {
+  const seeMoreRef = useRef<HTMLButtonElement>(null)
+  const filtersInMenuCount = filtersCount - visibleFiltersCount
+
+  const title =
+    filtersInMenuCount === 1
+      ? 'See 1 more filter and actions'
+      : filtersInMenuCount > 1
+        ? `See ${filtersInMenuCount} more filters and actions`
+        : 'See actions'
+
+  const showMoreFilters = filtersCount !== visibleFiltersCount
+  const showSomeActions = actions.some((a) => a)
+
+  return (
+    <Popover className={className}>
+      <BlurMenuButtonOnEscape targetRef={seeMoreRef} />
+      <Popover.Button
+        title={title}
+        ref={seeMoreRef}
+        className={classNames(
+          popover.toggleButton.classNames.rounded,
+          popover.toggleButton.classNames.shadow,
+          'justify-center',
+          'relative group'
+        )}
+        style={{
+          height: SEE_MORE_WIDTH_PX,
+          width: SEE_MORE_WIDTH_PX,
+          marginLeft: SEE_MORE_LEFT_MARGIN_PX,
+          marginRight: SEE_MORE_RIGHT_MARGIN_PX
+        }}
+      >
+        <EllipsisHorizontalIcon className="block h-5 w-5" />
+        {showMoreFilters && (
+          <div
+            aria-hidden="true"
+            className="absolute flex justify-end left-0 right-0 bottom-0 translate-y-1/4 pr-[3px]"
+          >
+            <div className="text-[10px] leading-[10px] min-w-[10px] font-medium shadow-sm px-[3px] py-[1px] flex items-center rounded-xs bg-gray-100 dark:bg-gray-850">
+              +{filtersInMenuCount}
+            </div>
+          </div>
+        )}
+      </Popover.Button>
+      <Transition
+        as="div"
+        {...popover.transition.props}
+        className={classNames(
+          popover.transition.classNames.fullwidth,
+          'mt-2 md:right-auto md:origin-top-left'
+        )}
+      >
+        <Popover.Panel
+          className={classNames(
+            popover.panel.classNames.roundedSheet,
+            'flex flex-col'
+          )}
+        >
+          {showMoreFilters && (
+            <>
+              <div className="py-4 px-4">
+                <AppliedFilterPillsList
+                  direction="vertical"
+                  pillClassName="!shadow-none !bg-gray-100 dark:!bg-gray-700"
+                  slice={{
+                    type: 'no-render-outside',
+                    start: visibleFiltersCount
+                  }}
+                />
+              </div>
+              {showSomeActions && (
+                <div className="mb-1 border-gray-200 dark:border-gray-700 border-b"></div>
+              )}
+            </>
+          )}
+          {showSomeActions && (
+            <div className="flex flex-col">
+              {actions.map((action) => {
+                const linkClassName = classNames(
+                  popover.items.classNames.navigationLink,
+                  popover.items.classNames.selectedOption,
+                  popover.items.classNames.hoverLink,
+                  'whitespace-nowrap'
+                )
+
+                switch (action) {
+                  case 'clear all filters':
+                    return (
+                      <ClearAction key={action} className={linkClassName} />
+                    )
+                  case 'save as segment':
+                    return (
+                      <SaveAsSegmentAction
+                        key={action}
+                        className={linkClassName}
+                      />
+                    )
+                  default:
+                    return null
+                }
+              })}
+            </div>
+          )}
+        </Popover.Panel>
+      </Transition>
+    </Popover>
+  )
+}
+
+const ClearAction = ({ className }: { className?: string }) => (
   <AppNavigationLink
-    title="Clear all filters"
-    className={classNames(
-      'self-start button h-9 !px-3 !py-2 flex !bg-red-500 dark:!bg-red-500 hover:!bg-red-600 dark:hover:!bg-red-700 whitespace-nowrap'
-    )}
+    className={className}
     search={(search) => ({
       ...search,
       filters: null,
@@ -245,3 +348,18 @@ const ClearAction = () => (
     Clear all filters
   </AppNavigationLink>
 )
+
+const SaveAsSegmentAction = ({ className }: { className?: string }) => {
+  const { setModal } = useRoutelessModalsContext()
+
+  return (
+    <AppNavigationLink
+      className={className}
+      search={(s) => s}
+      onClick={() => setModal('create')}
+      state={{ expandedSegment: null }}
+    >
+      Save as segment
+    </AppNavigationLink>
+  )
+}

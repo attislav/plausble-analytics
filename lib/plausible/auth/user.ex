@@ -19,6 +19,21 @@ defmodule Plausible.Auth.User do
 
   @required [:email, :name, :password]
 
+  on_ee do
+    @derive {Plausible.Audit.Encoder,
+             only: [
+               :id,
+               :email,
+               :name,
+               :email_verified,
+               :previous_email,
+               :totp_enabled,
+               :last_team_identifier,
+               :sso_integration,
+               :sso_domain
+             ]}
+  end
+
   schema "users" do
     field :email, :string
     field :password_hash
@@ -40,12 +55,30 @@ defmodule Plausible.Auth.User do
     field :totp_token, :string
     field :totp_last_used_at, :naive_datetime
 
+    # for context perseverance across sessions
+    field :last_team_identifier, Ecto.UUID
+
+    on_ee do
+      # Fields for SSO
+      field :type, Ecto.Enum, values: [:standard, :sso]
+      field :sso_identity_id, :string
+      field :last_sso_login, :naive_datetime
+
+      belongs_to :sso_integration, Plausible.Auth.SSO.Integration, on_replace: :nilify
+      belongs_to :sso_domain, Plausible.Auth.SSO.Domain, on_replace: :nilify
+    end
+
     has_many :sessions, Plausible.Auth.UserSession
     has_many :team_memberships, Plausible.Teams.Membership
     has_many :api_keys, Plausible.Auth.ApiKey
     has_one :google_auth, Plausible.Site.GoogleAuth
     has_many :owner_memberships, Plausible.Teams.Membership, where: [role: :owner]
     has_many :owned_teams, through: [:owner_memberships, :team]
+
+    on_ce do
+      # we only need this for backfill teams migration to work; let's figure out how to safely remove later on
+      field :trial_expiry_date, :date
+    end
 
     timestamps()
   end
@@ -180,6 +213,10 @@ defmodule Plausible.Auth.User do
       |> Base.encode16(case: :lower)
 
     Path.join(PlausibleWeb.Endpoint.url(), ["avatar/", hash])
+  end
+
+  def profile_img_url(email) when is_binary(email) do
+    profile_img_url(%__MODULE__{email: email})
   end
 
   defp validate_email_changed(changeset) do

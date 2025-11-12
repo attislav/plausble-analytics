@@ -46,54 +46,64 @@ defmodule PlausibleWeb.StatsController do
 
   alias Plausible.Sites
   alias Plausible.Stats.{Filters, Query}
+  alias Plausible.Teams
   alias PlausibleWeb.Api
+  alias Plausible.Billing.Feature.SharedLinks
 
-  @all_site_roles PlausibleWeb.Plugs.AuthorizeSiteAccess.all_roles()
-
-  plug(PlausibleWeb.Plugs.AuthorizeSiteAccess when action == :stats)
-
-  plug(
-    PlausibleWeb.Plugs.AuthorizeSiteAccess,
-    @all_site_roles -- [:public] when action == :csv_export
-  )
+  plug(PlausibleWeb.Plugs.AuthorizeSiteAccess when action in [:stats, :csv_export])
 
   def stats(%{assigns: %{site: site}} = conn, _params) do
     site = Plausible.Repo.preload(site, :owners)
+    site_role = conn.assigns[:site_role]
     current_user = conn.assigns[:current_user]
     stats_start_date = Plausible.Sites.stats_start_date(site)
-    can_see_stats? = not Sites.locked?(site) or conn.assigns[:site_role] == :super_admin
-    demo = site.domain == PlausibleWeb.Endpoint.host()
+    can_see_stats? = not Teams.locked?(site.team) or site_role == :super_admin
+    demo = site.domain == "plausible.io"
     dogfood_page_path = if demo, do: "/#{site.domain}", else: "/:dashboard"
-    skip_to_dashboard? = conn.params["skip_to_dashboard"] == "true"
 
-    scroll_depth_visible? =
-      Plausible.Stats.ScrollDepth.check_feature_visible!(site, current_user)
+    consolidated_view? = Plausible.Sites.consolidated?(site)
+
+    team_has_consolidated_view? =
+      on_ee(do: Plausible.ConsolidatedView.ok_to_display?(site.team, current_user), else: false)
+
+    team_identifier = site.team.identifier
+
+    skip_to_dashboard? =
+      conn.params["skip_to_dashboard"] == "true" or consolidated_view?
+
+    {:ok, segments} = Plausible.Segments.get_all_for_site(site, site_role)
 
     cond do
       (stats_start_date && can_see_stats?) || (can_see_stats? && skip_to_dashboard?) ->
+        flags = get_flags(current_user, site)
+
         conn
         |> put_resp_header("x-robots-tag", "noindex, nofollow")
         |> render("stats.html",
           site: site,
+          site_role: site_role,
           has_goals: Plausible.Sites.has_goals?(site),
           revenue_goals: list_revenue_goals(site),
           funnels: list_funnels(site),
           has_props: Plausible.Props.configured?(site),
-          scroll_depth_visible: scroll_depth_visible?,
           stats_start_date: stats_start_date,
           native_stats_start_date: NaiveDateTime.to_date(site.native_stats_start_at),
           title: title(conn, site),
           demo: demo,
-          flags: get_flags(current_user, site),
+          flags: flags,
           is_dbip: is_dbip(),
-          dogfood_page_path: dogfood_page_path,
-          load_dashboard_js: true
+          segments: segments,
+          load_dashboard_js: true,
+          hide_footer?: if(ce?() || demo, do: false, else: site_role != :public),
+          consolidated_view?: consolidated_view?,
+          team_has_consolidated_view?: team_has_consolidated_view?,
+          team_identifier: team_identifier
         )
 
       !stats_start_date && can_see_stats? ->
-        redirect(conn, external: Routes.site_path(conn, :verification, site.domain))
+        redirect(conn, to: Routes.site_path(conn, :verification, site.domain))
 
-      Sites.locked?(site) ->
+      Teams.locked?(site.team) ->
         site = Plausible.Repo.preload(site, :owners)
         render(conn, "site_locked.html", site: site, dogfood_page_path: dogfood_page_path)
     end
@@ -131,7 +141,7 @@ defmodule PlausibleWeb.StatsController do
       limited_params = Map.merge(params, %{"limit" => "100"})
 
       csvs = %{
-        ~c"visitors.csv" => fn -> main_graph_csv(site, query, conn.assigns[:current_user]) end,
+        ~c"visitors.csv" => fn -> main_graph_csv(site, query) end,
         ~c"sources.csv" => fn -> Api.StatsController.sources(conn, params) end,
         ~c"channels.csv" => fn -> Api.StatsController.channels(conn, params) end,
         ~c"utm_mediums.csv" => fn -> Api.StatsController.utm_mediums(conn, params) end,
@@ -181,8 +191,8 @@ defmodule PlausibleWeb.StatsController do
     end
   end
 
-  defp main_graph_csv(site, query, current_user) do
-    {metrics, column_headers} = csv_graph_metrics(query, site, current_user)
+  defp main_graph_csv(site, query) do
+    {metrics, column_headers} = csv_graph_metrics(query)
 
     map_bucket_to_row = fn bucket -> Enum.map([:date | metrics], &bucket[&1]) end
     prepend_column_headers = fn data -> [column_headers | data] end
@@ -194,11 +204,10 @@ defmodule PlausibleWeb.StatsController do
     |> NimbleCSV.RFC4180.dump_to_iodata()
   end
 
-  defp csv_graph_metrics(query, site, current_user) do
+  defp csv_graph_metrics(query) do
     include_scroll_depth? =
       !query.include_imported &&
-        Filters.filtering_on_dimension?(query, "event:page", behavioral_filters: :ignore) &&
-        Plausible.Stats.ScrollDepth.feature_visible?(site, current_user)
+        Filters.filtering_on_dimension?(query, "event:page", behavioral_filters: :ignore)
 
     {metrics, column_headers} =
       if Filters.filtering_on_dimension?(query, "event:goal", max_depth: 0) do
@@ -290,6 +299,7 @@ defmodule PlausibleWeb.StatsController do
         conn
         |> render("shared_link_password.html",
           link: shared_link,
+          query_string: conn.query_string,
           dogfood_page_path: "/share/:dashboard"
         )
     end
@@ -299,10 +309,11 @@ defmodule PlausibleWeb.StatsController do
     link_query =
       from(link in Plausible.Site.SharedLink,
         inner_join: site in assoc(link, :site),
+        inner_join: team in assoc(site, :team),
         where: link.slug == ^auth,
         where: site.domain == ^domain,
         limit: 1,
-        preload: [site: site]
+        preload: [site: {site, team: team}]
       )
 
     case Repo.one(link_query) do
@@ -328,12 +339,17 @@ defmodule PlausibleWeb.StatsController do
 
         conn
         |> put_resp_cookie(shared_link_cookie_name(slug), token)
-        |> redirect(to: "/share/#{URI.encode_www_form(shared_link.site.domain)}?auth=#{slug}")
+        |> redirect(
+          to:
+            Routes.stats_path(conn, :shared_link, shared_link.site.domain, auth: slug) <>
+              qs_appendix(conn)
+        )
       else
         conn
         |> render("shared_link_password.html",
           link: shared_link,
           error: "Incorrect password. Please try again.",
+          query_string: conn.query_string,
           dogfood_page_path: "/share/:dashboard"
         )
       end
@@ -342,41 +358,20 @@ defmodule PlausibleWeb.StatsController do
     end
   end
 
+  def qs_appendix(conn)
+      when is_nil(conn.query_string) or
+             (is_binary(conn.query_string) and byte_size(conn.query_string)) == 0,
+      do: ""
+
+  def qs_appendix(conn), do: "&#{conn.query_string}"
+
   defp render_shared_link(conn, shared_link) do
+    shared_links_feature_access? =
+      SharedLinks.check_availability(shared_link.site.team) == :ok or
+        shared_link.name in Plausible.Sites.shared_link_special_names()
+
     cond do
-      !shared_link.site.locked ->
-        current_user = conn.assigns[:current_user]
-        shared_link = Plausible.Repo.preload(shared_link, site: :owners)
-        stats_start_date = Plausible.Sites.stats_start_date(shared_link.site)
-
-        scroll_depth_visible? =
-          Plausible.Stats.ScrollDepth.check_feature_visible!(shared_link.site, current_user)
-
-        conn
-        |> put_resp_header("x-robots-tag", "noindex, nofollow")
-        |> delete_resp_header("x-frame-options")
-        |> render("stats.html",
-          site: shared_link.site,
-          has_goals: Sites.has_goals?(shared_link.site),
-          revenue_goals: list_revenue_goals(shared_link.site),
-          funnels: list_funnels(shared_link.site),
-          has_props: Plausible.Props.configured?(shared_link.site),
-          scroll_depth_visible: scroll_depth_visible?,
-          stats_start_date: stats_start_date,
-          native_stats_start_date: NaiveDateTime.to_date(shared_link.site.native_stats_start_at),
-          title: title(conn, shared_link.site),
-          demo: false,
-          dogfood_page_path: "/share/:dashboard",
-          shared_link_auth: shared_link.slug,
-          embedded: conn.params["embed"] == "true",
-          background: conn.params["background"],
-          theme: conn.params["theme"],
-          flags: get_flags(current_user, shared_link.site),
-          is_dbip: is_dbip(),
-          load_dashboard_js: true
-        )
-
-      Sites.locked?(shared_link.site) ->
+      Teams.locked?(shared_link.site.team) ->
         owners = Plausible.Repo.preload(shared_link.site, :owners)
 
         render(conn, "site_locked.html",
@@ -384,14 +379,77 @@ defmodule PlausibleWeb.StatsController do
           site: shared_link.site,
           dogfood_page_path: "/share/:dashboard"
         )
+
+      not shared_links_feature_access? ->
+        owners = Plausible.Repo.preload(shared_link.site, :owners)
+
+        render(conn, "site_locked.html",
+          only_shared_link_access_missing?: true,
+          owners: owners,
+          site: shared_link.site,
+          dogfood_page_path: "/share/:dashboard"
+        )
+
+      not Teams.locked?(shared_link.site.team) ->
+        current_user = conn.assigns[:current_user]
+        site_role = get_fallback_site_role(conn)
+        shared_link = Plausible.Repo.preload(shared_link, site: :owners)
+        stats_start_date = Plausible.Sites.stats_start_date(shared_link.site)
+
+        flags = get_flags(current_user, shared_link.site)
+
+        {:ok, segments} = Plausible.Segments.get_all_for_site(shared_link.site, site_role)
+
+        embedded? = conn.params["embed"] == "true"
+
+        consolidated_view? = Plausible.Sites.consolidated?(shared_link.site)
+
+        team_has_consolidated_view? =
+          on_ee(
+            do: Plausible.ConsolidatedView.ok_to_display?(shared_link.site.team, current_user),
+            else: false
+          )
+
+        team_identifier = shared_link.site.team.identifier
+
+        conn
+        |> put_resp_header("x-robots-tag", "noindex, nofollow")
+        |> delete_resp_header("x-frame-options")
+        |> render("stats.html",
+          site: shared_link.site,
+          site_role: site_role,
+          has_goals: Sites.has_goals?(shared_link.site),
+          revenue_goals: list_revenue_goals(shared_link.site),
+          funnels: list_funnels(shared_link.site),
+          has_props: Plausible.Props.configured?(shared_link.site),
+          stats_start_date: stats_start_date,
+          native_stats_start_date: NaiveDateTime.to_date(shared_link.site.native_stats_start_at),
+          title: title(conn, shared_link.site),
+          demo: false,
+          shared_link_auth: shared_link.slug,
+          embedded: embedded?,
+          background: conn.params["background"],
+          theme: conn.params["theme"],
+          flags: flags,
+          is_dbip: is_dbip(),
+          segments: segments,
+          load_dashboard_js: true,
+          hide_footer?: if(ce?(), do: embedded?, else: embedded? || site_role != :public),
+          consolidated_view?: consolidated_view?,
+          team_has_consolidated_view?: team_has_consolidated_view?,
+          team_identifier: team_identifier
+        )
     end
   end
+
+  defp get_fallback_site_role(conn),
+    do: if(role = conn.assigns[:site_role], do: role, else: :public)
 
   defp shared_link_cookie_name(slug), do: "shared-link-" <> slug
 
   defp get_flags(user, site),
     do:
-      [:saved_segments, :scroll_depth]
+      []
       |> Enum.map(fn flag ->
         {flag, FunWithFlags.enabled?(flag, for: user) || FunWithFlags.enabled?(flag, for: site)}
       end)

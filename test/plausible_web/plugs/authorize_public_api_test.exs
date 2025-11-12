@@ -2,7 +2,10 @@ defmodule PlausibleWeb.Plugs.AuthorizePublicAPITest do
   use PlausibleWeb.ConnCase, async: false
   use Plausible.Teams.Test
 
+  import ExUnit.CaptureLog
+
   alias PlausibleWeb.Plugs.AuthorizePublicAPI
+  alias Plausible.Repo
 
   setup %{conn: conn} do
     conn =
@@ -86,6 +89,31 @@ defmodule PlausibleWeb.Plugs.AuthorizePublicAPITest do
              "The account that owns this API key does not have access"
   end
 
+  on_ee do
+    test "rejects access to a site that is a consolidated view (unless instructed otherwise)", %{
+      conn: conn
+    } do
+      user = new_user()
+      api_key = insert(:api_key, user: user, scopes: ["sites:provision:*"])
+      {:ok, team} = new_user() |> Plausible.Teams.get_or_create()
+      new_site(team: team)
+      new_site(team: team)
+      consolidated_view = new_consolidated_view(team)
+
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{api_key.key}")
+        |> get("/", %{"site_id" => consolidated_view.domain})
+        |> assign(:api_scope, "sites:provision:*")
+        |> AuthorizePublicAPI.call(nil)
+
+      assert conn.halted
+
+      assert json_response(conn, 400)["error"] =~
+               "This operation is unavailable for a consolidated view"
+    end
+  end
+
   @tag :ee_only
   test "halts with error when upgrade is required", %{conn: conn} do
     user = new_user() |> subscribe_to_enterprise_plan(paddle_plan_id: "123321", features: [])
@@ -107,7 +135,8 @@ defmodule PlausibleWeb.Plugs.AuthorizePublicAPITest do
 
   test "halts with error when site is locked", %{conn: conn} do
     user = new_user()
-    site = new_site(owner: user, locked: true)
+    site = new_site(owner: user)
+    site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
     api_key = insert(:api_key, user: user)
 
     conn =
@@ -171,14 +200,17 @@ defmodule PlausibleWeb.Plugs.AuthorizePublicAPITest do
   end
 
   test "halts with error when API rate limit hit", %{conn: conn} do
-    user = insert(:user)
-    api_key = insert(:api_key, user: user, hourly_request_limit: 1)
+    user = new_user(team: [hourly_api_request_limit: 1])
+    site = new_site(owner: user)
+
+    api_key = insert(:api_key, user: user)
 
     conn =
       conn
       |> put_req_header("authorization", "Bearer #{api_key.key}")
-      |> get("/")
+      |> get("/?site_id=#{site.domain}")
       |> assign(:api_scope, "sites:read:*")
+      |> assign(:api_context, :site)
 
     first_resp = AuthorizePublicAPI.call(conn, nil)
     second_resp = AuthorizePublicAPI.call(conn, nil)
@@ -186,6 +218,64 @@ defmodule PlausibleWeb.Plugs.AuthorizePublicAPITest do
     refute first_resp.halted
     assert second_resp.halted
     assert json_response(second_resp, 429)["error"] =~ "Too many API requests."
+  end
+
+  test "does not rate limit when not in applicable context", %{conn: conn} do
+    user = new_user(team: [hourly_api_request_limit: 1])
+    site = new_site(owner: user)
+
+    api_key = insert(:api_key, user: user)
+
+    conn =
+      conn
+      |> put_req_header("authorization", "Bearer #{api_key.key}")
+      |> get("/?site_id=#{site.domain}")
+      |> assign(:api_scope, "sites:read:*")
+
+    first_resp = AuthorizePublicAPI.call(conn, nil)
+    second_resp = AuthorizePublicAPI.call(conn, nil)
+
+    refute first_resp.halted
+    refute second_resp.halted
+  end
+
+  test "logs a warning on using API key against site with guest access", %{conn: conn} do
+    user = new_user(team: [hourly_api_request_limit: 1])
+    site = new_site()
+    add_guest(site, user: user, role: :editor)
+
+    api_key = insert(:api_key, user: user)
+
+    capture_log(fn ->
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{api_key.key}")
+        |> get("/?site_id=#{site.domain}")
+        |> assign(:api_scope, "sites:read:*")
+        |> assign(:api_context, :site)
+        |> AuthorizePublicAPI.call(nil)
+
+      refute conn.halted
+    end) =~ "API key #{api_key.id} user accessing #{site.domain} as a guest"
+  end
+
+  test "logs a warning on using API key against site with no access", %{conn: conn} do
+    user = new_user(team: [hourly_api_request_limit: 1])
+    site = new_site()
+
+    api_key = insert(:api_key, user: user)
+
+    capture_log(fn ->
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer #{api_key.key}")
+        |> get("/?site_id=#{site.domain}")
+        |> assign(:api_scope, "stats:read:*")
+        |> assign(:api_context, :site)
+        |> AuthorizePublicAPI.call(nil)
+
+      assert conn.halted
+    end) =~ "API key #{api_key.id} user trying to access #{site.domain} as a non-member"
   end
 
   test "passes and sets current user when valid API key with required scope provided", %{
@@ -224,11 +314,53 @@ defmodule PlausibleWeb.Plugs.AuthorizePublicAPITest do
     assert conn.assigns.site.id == site.id
   end
 
+  test "passes for team-bound API key when team matches", %{conn: conn} do
+    user = new_user()
+    _site = new_site(owner: user)
+    another_site = new_site()
+    another_team = another_site.team |> Plausible.Teams.complete_setup()
+    add_member(another_team, user: user, role: :editor)
+    api_key = insert(:api_key, user: user, team: another_team)
+
+    conn =
+      conn
+      |> put_req_header("authorization", "Bearer #{api_key.key}")
+      |> get("/", %{"site_id" => another_site.domain})
+      |> assign(:api_scope, "stats:read:*")
+      |> AuthorizePublicAPI.call(nil)
+
+    refute conn.halted
+    assert conn.assigns.current_team.id == another_team.id
+    assert conn.assigns.current_user.id == user.id
+    assert conn.assigns.site.id == another_site.id
+  end
+
+  test "halts for team-bound API key when team does not match", %{conn: conn} do
+    user = new_user()
+    site = new_site(owner: user)
+    another_site = new_site()
+    another_team = another_site.team |> Plausible.Teams.complete_setup()
+    add_member(another_team, user: user, role: :editor)
+    api_key = insert(:api_key, user: user, team: another_team)
+
+    conn =
+      conn
+      |> put_req_header("authorization", "Bearer #{api_key.key}")
+      |> get("/", %{"site_id" => site.domain})
+      |> assign(:api_scope, "stats:read:*")
+      |> AuthorizePublicAPI.call(nil)
+
+    assert conn.halted
+
+    assert json_response(conn, 401)["error"] =~ "Invalid API key or site ID."
+  end
+
   @tag :ee_only
   test "passes for super admin user even if not a member of the requested site", %{conn: conn} do
     user = new_user()
     patch_env(:super_admin_user_ids, [user.id])
-    site = new_site(locked: true)
+    site = new_site()
+    site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
     api_key = insert(:api_key, user: user)
 
     conn =

@@ -33,8 +33,8 @@ defmodule PlausibleWeb.Live.Shields.HostnameRules do
     <div>
       <.settings_tiles>
         <.tile docs="excluding#exclude-visits-by-hostname">
-          <:title>Hostnames Allow List</:title>
-          <:subtitle>Accept incoming traffic only from familiar hostnames</:subtitle>
+          <:title>Hostnames allow list</:title>
+          <:subtitle>Accept incoming traffic only from familiar hostnames.</:subtitle>
           <.filter_bar
             :if={@hostname_rules_count < Shields.maximum_hostname_rules()}
             filtering_enabled?={false}
@@ -45,7 +45,7 @@ defmodule PlausibleWeb.Live.Shields.HostnameRules do
               x-on:click={Modal.JS.open("hostname-rule-form-modal")}
               mt?={false}
             >
-              Add Hostname
+              Add hostname
             </.button>
           </.filter_bar>
 
@@ -61,7 +61,7 @@ defmodule PlausibleWeb.Live.Shields.HostnameRules do
           </.notice>
 
           <p :if={Enum.empty?(@hostname_rules)} class="mt-12 mb-8 text-center text-sm">
-            No Hostname Rules configured for this site.
+            No hostname rules configured for this site.
             <strong>
               Traffic from all hostnames is currently accepted.
             </strong>
@@ -120,9 +120,9 @@ defmodule PlausibleWeb.Live.Shields.HostnameRules do
               for={@form}
               phx-submit="save-hostname-rule"
               phx-target={@myself}
-              class="max-w-md w-full mx-auto bg-white dark:bg-gray-800"
+              class="max-w-md w-full mx-auto"
             >
-              <.title>Add Hostname to Allow List</.title>
+              <.title>Add hostname to allow list</.title>
 
               <.live_component
                 class="mt-8"
@@ -148,7 +148,7 @@ defmodule PlausibleWeb.Live.Shields.HostnameRules do
                 <% end %>
               </p>
               <.button type="submit" class="w-full">
-                Add Hostname
+                Add hostname
               </.button>
             </.form>
           </.live_component>
@@ -227,7 +227,16 @@ defmodule PlausibleWeb.Live.Shields.HostnameRules do
   end
 
   def suggest_hostnames(input, _options, site) do
-    query = Plausible.Stats.Query.from(site, %{})
+    query =
+      Plausible.Stats.Query.build!(
+        site,
+        :internal,
+        %{
+          "site_id" => site.domain,
+          "date_range" => "all",
+          "metrics" => ["pageviews"]
+        }
+      )
 
     site
     |> Plausible.Stats.filter_suggestions(query, "hostname", input)

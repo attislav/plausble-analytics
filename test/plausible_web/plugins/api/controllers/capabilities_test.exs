@@ -29,7 +29,11 @@ defmodule PlausibleWeb.Plugins.API.Controllers.CapabilitiesTest do
                    "Goals" => false,
                    "Props" => false,
                    "RevenueGoals" => false,
-                   "StatsAPI" => false
+                   "StatsAPI" => false,
+                   "SitesAPI" => false,
+                   "SiteSegments" => false,
+                   "SharedLinks" => false,
+                   "SSO" => false
                  }
                }
 
@@ -53,7 +57,11 @@ defmodule PlausibleWeb.Plugins.API.Controllers.CapabilitiesTest do
                    "Goals" => false,
                    "Props" => false,
                    "RevenueGoals" => false,
-                   "StatsAPI" => false
+                   "StatsAPI" => false,
+                   "SitesAPI" => false,
+                   "SiteSegments" => false,
+                   "SharedLinks" => false,
+                   "SSO" => false
                  }
                }
 
@@ -79,7 +87,11 @@ defmodule PlausibleWeb.Plugins.API.Controllers.CapabilitiesTest do
                    "Goals" => true,
                    "Props" => true,
                    "RevenueGoals" => true,
-                   "StatsAPI" => true
+                   "StatsAPI" => true,
+                   "SitesAPI" => false,
+                   "SiteSegments" => true,
+                   "SharedLinks" => true,
+                   "SSO" => false
                  }
                }
 
@@ -107,7 +119,46 @@ defmodule PlausibleWeb.Plugins.API.Controllers.CapabilitiesTest do
                    "Goals" => true,
                    "Props" => false,
                    "RevenueGoals" => false,
-                   "StatsAPI" => false
+                   "StatsAPI" => false,
+                   "SitesAPI" => false,
+                   "SiteSegments" => false,
+                   "SharedLinks" => true,
+                   "SSO" => false
+                 }
+               }
+
+      assert_schema(resp, "Capabilities", spec())
+    end
+
+    @tag :ee_only
+    test "enterprise with SitesAPI", %{conn: conn, site: site, token: token} do
+      [owner | _] = Plausible.Repo.preload(site, :owners).owners
+
+      subscribe_to_enterprise_plan(owner,
+        features: [Plausible.Billing.Feature.StatsAPI, Plausible.Billing.Feature.SitesAPI]
+      )
+
+      resp =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> authenticate(site.domain, token)
+        |> get(Routes.plugins_api_capabilities_url(PlausibleWeb.Endpoint, :index))
+        |> json_response(200)
+
+      assert resp ==
+               %{
+                 "authorized" => true,
+                 "data_domain" => site.domain,
+                 "features" => %{
+                   "Funnels" => false,
+                   "Goals" => true,
+                   "Props" => false,
+                   "RevenueGoals" => false,
+                   "StatsAPI" => true,
+                   "SitesAPI" => true,
+                   "SiteSegments" => false,
+                   "SharedLinks" => false,
+                   "SSO" => false
                  }
                }
 

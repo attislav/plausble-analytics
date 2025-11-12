@@ -1,5 +1,3 @@
-/** @format */
-
 import React from 'react'
 import { render, screen } from '../../../test-utils'
 import userEvent from '@testing-library/user-event'
@@ -7,24 +5,14 @@ import { TestContextProviders } from '../../../test-utils/app-context-providers'
 import { FiltersBar, handleVisibility } from './filters-bar'
 import { getRouterBasepath } from '../router'
 import { stringifySearch } from '../util/url-search-params'
+import { mockAnimationsApi, mockResizeObserver } from 'jsdom-testing-mocks'
+
+mockAnimationsApi()
+const resizeObserver = mockResizeObserver()
 
 const domain = 'dummy.site'
 
-beforeAll(() => {
-  const mockResizeObserver = jest.fn(
-    (handleEntries) =>
-      ({
-        observe: jest.fn().mockImplementation((entry) => {
-          handleEntries([entry], null as unknown as ResizeObserver)
-        }),
-        unobserve: jest.fn(),
-        disconnect: jest.fn()
-      }) as unknown as ResizeObserver
-  )
-  global.ResizeObserver = mockResizeObserver
-})
-
-test('user can see expected filters and clear them one by one or all together', async () => {
+test('user can see expected filters and clear them one by one or all together on small screens', async () => {
   const searchRecord = {
     filters: [
       ['is', 'country', ['DE']],
@@ -69,16 +57,19 @@ test('user can see expected filters and clear them one by one or all together', 
     }
   )
 
+  // needed to initiate the layout calculation effect of the component
+  resizeObserver.resize()
+
   const queryFilterPills = () =>
     screen.queryAllByRole('link', { hidden: false, name: /.* is .*/i })
 
-  // all filters appear in See more menu
+  // all filters appear in See more menu (see the mock widths in props)
   expect(queryFilterPills().map((m) => m.textContent)).toEqual([])
 
   await userEvent.click(
     screen.getByRole('button', {
       hidden: false,
-      name: 'See more'
+      name: 'See 3 more filters and actions'
     })
   )
 
@@ -101,7 +92,10 @@ test('user can see expected filters and clear them one by one or all together', 
   ])
 
   await userEvent.click(
-    screen.getByRole('link', { hidden: false, name: 'Clear all filters' })
+    screen.getByRole('link', {
+      hidden: false,
+      name: 'Clear all filters'
+    })
   )
 
   expect(queryFilterPills().map((m) => m.textContent)).toEqual([])
@@ -115,7 +109,8 @@ describe(`${handleVisibility.name}`, () => {
       leftoverWidth: 1000,
       seeMoreWidth: 100,
       pillWidths: [200, 200, 200, 200],
-      pillGap: 25
+      pillGap: 25,
+      mustShowSeeMoreMenu: true
     }
     handleVisibility(input)
     expect(setVisibility).toHaveBeenCalledTimes(1)
@@ -148,7 +143,8 @@ describe(`${handleVisibility.name}`, () => {
       leftoverWidth: 300,
       seeMoreWidth: 50,
       pillWidths: [250],
-      pillGap: 25
+      pillGap: 25,
+      mustShowSeeMoreMenu: false
     }
     handleVisibility(input)
     expect(setVisibility).toHaveBeenCalledTimes(1)
@@ -165,7 +161,8 @@ describe(`${handleVisibility.name}`, () => {
       leftoverWidth: 300,
       seeMoreWidth: 50,
       pillWidths: [250, 200],
-      pillGap: 25
+      pillGap: 25,
+      mustShowSeeMoreMenu: true
     }
     handleVisibility(input)
     expect(setVisibility).toHaveBeenCalledTimes(1)

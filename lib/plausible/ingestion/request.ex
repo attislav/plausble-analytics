@@ -27,6 +27,17 @@ defmodule Plausible.Ingestion.Request do
   alias Ecto.Changeset
 
   @max_url_size 2_000
+  @missing_scroll_depth 255
+  @missing_engagement_time 0
+
+  # :KLUDGE: Old version of tracker script sent huge values for engagement time. Ignore
+  # these while users might still have the old script cached.
+  @too_large_engagement_time :timer.hours(30 * 24)
+
+  @blank_engagement_error_message "engagement event requires a valid integer value for at least one of 'sd' or 'e' fields"
+
+  def too_large_engagement_time(), do: @too_large_engagement_time
+  def blank_engagement_error_message(), do: @blank_engagement_error_message
 
   @primary_key false
   embedded_schema do
@@ -43,6 +54,8 @@ defmodule Plausible.Ingestion.Request do
     field :props, :map
     field :scroll_depth, :integer
     field :engagement_time, :integer
+    field :tracker_script_version, :integer, default: 0
+    field :interactive?, :boolean, default: true
 
     on_ee do
       field :revenue_source, :map
@@ -55,7 +68,8 @@ defmodule Plausible.Ingestion.Request do
 
   @type t() :: %__MODULE__{}
 
-  @spec build(Plug.Conn.t(), NaiveDateTime.t()) :: {:ok, t()} | {:error, Changeset.t()}
+  @spec build(Plug.Conn.t(), NaiveDateTime.t()) ::
+          {:ok, t(), Plug.Conn.t()} | {:error, Changeset.t()}
   @doc """
   Builds and initially validates %Plausible.Ingestion.Request{} struct from %Plug.Conn{}.
   """
@@ -69,30 +83,40 @@ defmodule Plausible.Ingestion.Request do
       )
 
     case parse_body(conn) do
-      {:ok, request_body} ->
-        changeset
-        |> put_ip_classification(conn)
-        |> put_remote_ip(conn)
-        |> put_uri(request_body)
-        |> put_hostname()
-        |> put_user_agent(conn)
-        |> put_request_params(request_body)
-        |> put_referrer(request_body)
-        |> put_props(request_body)
-        |> put_scroll_depth(request_body)
-        |> put_engagement_time(request_body)
-        |> put_pathname()
-        |> put_query_params()
-        |> put_revenue_source(request_body)
-        |> map_domains(request_body)
-        |> Changeset.validate_required([
-          :event_name,
-          :hostname,
-          :pathname,
-          :timestamp
-        ])
-        |> Changeset.validate_length(:event_name, max: 120)
-        |> Changeset.apply_action(nil)
+      {:ok, request_body, conn} ->
+        request =
+          changeset
+          |> put_ip_classification(conn)
+          |> put_remote_ip(conn)
+          |> put_uri(request_body)
+          |> put_hostname()
+          |> put_user_agent(conn)
+          |> put_request_params(request_body)
+          |> put_referrer(request_body)
+          |> put_pathname()
+          |> put_props(request_body)
+          |> put_engagement_fields(request_body)
+          |> put_query_params()
+          |> put_revenue_source(request_body)
+          |> put_interactive(request_body)
+          |> put_tracker_script_version(request_body)
+          |> map_domains(request_body)
+          |> Changeset.validate_required([
+            :event_name,
+            :hostname,
+            :pathname,
+            :timestamp
+          ])
+          |> Changeset.validate_length(:event_name, max: 120)
+          |> Changeset.apply_action(nil)
+
+        case request do
+          {:ok, request} ->
+            {:ok, request, conn}
+
+          {:error, _} = error ->
+            error
+        end
 
       {:error, :invalid_json} ->
         {:error, Changeset.add_error(changeset, :request, "Unable to parse request body as json")}
@@ -115,16 +139,16 @@ defmodule Plausible.Ingestion.Request do
     case conn.body_params do
       %Plug.Conn.Unfetched{} ->
         with max_length <- conn.assigns[:read_body_limit] || 1_000_000,
-             {:ok, body, _conn} <-
+             {:ok, body, conn} <-
                Plug.Conn.read_body(conn, length: max_length, read_length: max_length),
              {:ok, params} when is_map(params) <- Jason.decode(body) do
-          {:ok, params}
+          {:ok, params, conn}
         else
           _ -> {:error, :invalid_json}
         end
 
       params ->
-        {:ok, params}
+        {:ok, params, conn}
     end
   end
 
@@ -155,6 +179,18 @@ defmodule Plausible.Ingestion.Request do
     hash_mode = Changeset.get_field(changeset, :hash_mode)
     pathname = get_pathname(uri, hash_mode)
     Changeset.put_change(changeset, :pathname, pathname)
+  end
+
+  defp maybe_set_props_path_to_pathname(props_in_request, changeset) do
+    if Plausible.Goals.SystemGoals.sync_props_path_with_pathname?(
+         Changeset.get_field(changeset, :event_name),
+         props_in_request
+       ) do
+      # "path" props is added to the head of the props enum to avoid it being cut off
+      [{"path", Changeset.get_field(changeset, :pathname)}] ++ props_in_request
+    else
+      props_in_request
+    end
   end
 
   defp map_domains(changeset, %{} = request_body) do
@@ -213,12 +249,23 @@ defmodule Plausible.Ingestion.Request do
       (request_body["m"] || request_body["meta"] || request_body["p"] || request_body["props"])
       |> Plausible.Helpers.JSON.decode_or_fallback()
       |> Enum.reduce([], &filter_bad_props/2)
+      |> maybe_set_props_path_to_pathname(changeset)
       |> Enum.take(@max_props)
       |> Map.new()
 
     changeset
     |> Changeset.put_change(:props, props)
     |> validate_props()
+  end
+
+  defp put_interactive(changeset, %{} = request_body) do
+    case request_body["i"] || request_body["interactive"] do
+      interactive? when is_boolean(interactive?) ->
+        Changeset.put_change(changeset, :interactive?, interactive?)
+
+      _ ->
+        changeset
+    end
   end
 
   defp filter_bad_props({k, v}, acc) do
@@ -251,32 +298,36 @@ defmodule Plausible.Ingestion.Request do
     end
   end
 
-  defp put_scroll_depth(changeset, %{} = request_body) do
+  defp put_engagement_fields(changeset, %{} = request_body) do
     if Changeset.get_field(changeset, :event_name) == "engagement" do
-      scroll_depth =
-        case request_body["sd"] do
-          sd when is_integer(sd) and sd >= 0 and sd <= 100 -> sd
-          sd when is_integer(sd) and sd > 100 -> 100
-          _ -> 255
-        end
+      scroll_depth = parse_scroll_depth(request_body["sd"])
+      engagement_time = parse_engagement_time(request_body["e"])
 
-      Changeset.put_change(changeset, :scroll_depth, scroll_depth)
+      case {scroll_depth, engagement_time} do
+        {@missing_scroll_depth, @missing_engagement_time} ->
+          changeset
+          |> Changeset.add_error(
+            :event_name,
+            "engagement event requires a valid integer value for at least one of 'sd' or 'e' fields"
+          )
+
+        _ ->
+          changeset
+          |> Changeset.put_change(:scroll_depth, scroll_depth)
+          |> Changeset.put_change(:engagement_time, engagement_time)
+      end
     else
       changeset
     end
   end
 
-  defp put_engagement_time(changeset, %{} = request_body) do
-    if Changeset.get_field(changeset, :event_name) == "engagement" do
-      engagement_time =
-        case request_body["e"] do
-          e when is_integer(e) and e >= 0 -> e
-          _ -> 0
-        end
+  defp put_tracker_script_version(changeset, %{} = request_body) do
+    case request_body["v"] do
+      version when is_integer(version) ->
+        Changeset.put_change(changeset, :tracker_script_version, version)
 
-      Changeset.put_change(changeset, :engagement_time, engagement_time)
-    else
-      changeset
+      _ ->
+        changeset
     end
   end
 
@@ -339,6 +390,30 @@ defmodule Plausible.Ingestion.Request do
   def sanitize_hostname(nil) do
     nil
   end
+
+  defp parse_scroll_depth(sd) when is_binary(sd) do
+    case Integer.parse(sd) do
+      {sd_int, ""} -> parse_scroll_depth(sd_int)
+      _ -> @missing_scroll_depth
+    end
+  end
+
+  defp parse_scroll_depth(sd) when is_integer(sd) and sd >= 0 and sd <= 100, do: sd
+  defp parse_scroll_depth(sd) when is_integer(sd) and sd > 100, do: 100
+  defp parse_scroll_depth(_), do: @missing_scroll_depth
+
+  defp parse_engagement_time(et) when is_binary(et) do
+    case Integer.parse(et) do
+      {et_int, ""} -> parse_engagement_time(et_int)
+      _ -> @missing_engagement_time
+    end
+  end
+
+  defp parse_engagement_time(et)
+       when is_integer(et) and et >= 0 and et < @too_large_engagement_time,
+       do: et
+
+  defp parse_engagement_time(_), do: @missing_engagement_time
 end
 
 defimpl Jason.Encoder, for: URI do

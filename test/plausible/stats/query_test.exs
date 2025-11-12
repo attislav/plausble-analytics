@@ -3,6 +3,7 @@ defmodule Plausible.Stats.QueryTest do
   use Plausible.Teams.Test
   alias Plausible.Stats.Query
   alias Plausible.Stats.Legacy.QueryBuilder
+  alias Plausible.Stats.Filters.QueryParser
   alias Plausible.Stats.DateTimeRange
 
   doctest Plausible.Stats.Legacy.QueryBuilder
@@ -57,7 +58,7 @@ defmodule Plausible.Stats.QueryTest do
 
     assert q.utc_time_range.first == ~U[2024-05-03 16:25:00Z]
     assert q.utc_time_range.last == ~U[2024-05-03 16:30:05Z]
-    assert q.period == "realtime"
+    assert q.input_date_range == "realtime"
   end
 
   test "parses month format", %{site: site} do
@@ -71,16 +72,16 @@ defmodule Plausible.Stats.QueryTest do
   test "parses 6 month format", %{site: site} do
     q = Query.from(site, %{"period" => "6mo"}, %{}, @now)
 
-    assert q.utc_time_range.first == ~U[2023-12-01 05:00:00Z]
-    assert q.utc_time_range.last == ~U[2024-06-01 03:59:59Z]
+    assert q.utc_time_range.first == ~U[2023-11-01 04:00:00Z]
+    assert q.utc_time_range.last == ~U[2024-05-01 03:59:59Z]
     assert q.interval == "month"
   end
 
   test "parses 12 month format", %{site: site} do
     q = Query.from(site, %{"period" => "12mo"}, %{}, @now)
 
-    assert q.utc_time_range.first == ~U[2023-06-01 04:00:00Z]
-    assert q.utc_time_range.last == ~U[2024-06-01 03:59:59Z]
+    assert q.utc_time_range.first == ~U[2023-05-01 04:00:00Z]
+    assert q.utc_time_range.last == ~U[2024-05-01 03:59:59Z]
     assert q.interval == "month"
   end
 
@@ -97,7 +98,7 @@ defmodule Plausible.Stats.QueryTest do
 
     assert q.utc_time_range.first == ~U[2020-01-01 05:00:00Z]
     assert q.utc_time_range.last == ~U[2024-05-04 03:59:59Z]
-    assert q.period == "all"
+    assert q.input_date_range == "all"
     assert q.interval == "month"
   end
 
@@ -115,7 +116,7 @@ defmodule Plausible.Stats.QueryTest do
 
     assert q.utc_time_range.first == ~U[2024-05-03 04:00:00Z]
     assert q.utc_time_range.last == ~U[2024-05-04 03:59:59Z]
-    assert q.period == "all"
+    assert q.input_date_range == "all"
     assert q.interval == "hour"
   end
 
@@ -125,7 +126,7 @@ defmodule Plausible.Stats.QueryTest do
 
     assert q.utc_time_range.first == ~U[2024-05-03 04:00:00Z]
     assert q.utc_time_range.last == ~U[2024-05-04 03:59:59Z]
-    assert q.period == "all"
+    assert q.input_date_range == "all"
     assert q.interval == "hour"
   end
 
@@ -137,7 +138,7 @@ defmodule Plausible.Stats.QueryTest do
 
     assert q.utc_time_range.first == ~U[2024-05-02 04:00:00Z]
     assert q.utc_time_range.last == ~U[2024-05-04 03:59:59Z]
-    assert q.period == "all"
+    assert q.input_date_range == "all"
     assert q.interval == "day"
   end
 
@@ -149,7 +150,7 @@ defmodule Plausible.Stats.QueryTest do
 
     assert q.utc_time_range.first == ~U[2024-04-03 04:00:00Z]
     assert q.utc_time_range.last == ~U[2024-05-04 03:59:59Z]
-    assert q.period == "all"
+    assert q.input_date_range == "all"
     assert q.interval == "month"
   end
 
@@ -161,12 +162,15 @@ defmodule Plausible.Stats.QueryTest do
 
     assert q.utc_time_range.first == ~U[2024-04-03 04:00:00Z]
     assert q.utc_time_range.last == ~U[2024-05-04 03:59:59Z]
-    assert q.period == "all"
+    assert q.input_date_range == "all"
     assert q.interval == "week"
   end
 
   test "defaults to 30 days format", %{site: site} do
-    assert Query.from(site, %{}) == Query.from(site, %{"period" => "30d"})
+    query_default = Query.from(site, %{}) |> Map.delete(:now)
+    query_30d = Query.from(site, %{"period" => "30d"}) |> Map.delete(:now)
+
+    assert query_default == query_30d
   end
 
   test "parses custom format", %{site: site} do
@@ -478,6 +482,21 @@ defmodule Plausible.Stats.QueryTest do
                      [:is, "event:props:url", ["https://example.com"]]
                    ])
                })
+    end
+  end
+
+  on_ee do
+    describe "query.consolidated_site_ids" do
+      test "is set to nil when site is regular", %{site: site} do
+        assert %{consolidated_site_ids: nil} = Query.from(site, %{"period" => "day"})
+      end
+
+      test "is set to a list of site_ids when site is consolidated", %{site: site} do
+        cv = new_consolidated_view(site.team)
+
+        site_id = site.id
+        assert %{consolidated_site_ids: [^site_id]} = Query.from(cv, %{"period" => "day"})
+      end
     end
   end
 end

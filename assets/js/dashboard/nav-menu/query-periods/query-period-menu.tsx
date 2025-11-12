@@ -1,11 +1,8 @@
-/** @format */
-
 import React, { useMemo, useRef } from 'react'
 import classNames from 'classnames'
 import { useQueryContext } from '../../query-context'
 import { useSiteContext } from '../../site-context'
 import {
-  BlurMenuButtonOnEscape,
   isModifierPressed,
   isTyping,
   Keybind,
@@ -16,30 +13,29 @@ import {
   useAppNavigate
 } from '../../navigation/use-app-navigate'
 import {
-  COMPARISON_DISABLED_PERIODS,
   getCompareLinkItem,
-  last6MonthsLinkItem,
   getDatePeriodGroups,
   LinkItem,
   QueryPeriod,
   getCurrentPeriodDisplayName,
-  getSearchToApplyCustomDates
+  getSearchToApplyCustomDates,
+  isComparisonForbidden
 } from '../../query-time-periods'
 import { useMatch } from 'react-router-dom'
 import { rootRoute } from '../../router'
 import { Popover, Transition } from '@headlessui/react'
-import { popover } from '../../components/popover'
+import { popover, BlurMenuButtonOnEscape } from '../../components/popover'
 import {
   datemenuButtonClassName,
   DateMenuChevron,
   PopoverMenuProps,
   linkClassName,
-  MenuSeparator,
   CalendarPanel,
   hiddenCalendarButtonClassName
 } from './shared-menu-items'
 import { DateRangeCalendar } from './date-range-calendar'
 import { formatISO, nowForSite } from '../../util/date'
+import { MenuSeparator } from '../nav-menu-components'
 
 function QueryPeriodMenuKeybinds({
   closeDropdown,
@@ -56,7 +52,7 @@ function QueryPeriodMenuKeybinds({
   }
   return (
     <>
-      {groups.concat([[last6MonthsLinkItem]]).flatMap((group) =>
+      {groups.flatMap((group) =>
         group
           .filter(([[_name, keyboardKey]]) => !!keyboardKey)
           .map(([[_name, keyboardKey], { search, onEvent }]) => (
@@ -121,10 +117,14 @@ const QueryPeriodMenuInner = ({
   toggleCalendar: () => void
 }) => {
   const site = useSiteContext()
-  const { query } = useQueryContext()
+  const { query, expandedSegment } = useQueryContext()
 
   const groups = useMemo(() => {
-    const compareLink = getCompareLinkItem({ site, query })
+    const compareLink = getCompareLinkItem({
+      site,
+      query,
+      onEvent: closeDropdown
+    })
     return getDatePeriodGroups({
       site,
       onEvent: closeDropdown,
@@ -138,21 +138,24 @@ const QueryPeriodMenuInner = ({
           }
         ]
       ],
-      extraGroups: COMPARISON_DISABLED_PERIODS.includes(query.period)
+      extraGroups: isComparisonForbidden({
+        period: query.period,
+        segmentIsExpanded: !!expandedSegment
+      })
         ? []
         : [[compareLink]]
     })
-  }, [site, query, closeDropdown, toggleCalendar])
+  }, [site, query, closeDropdown, toggleCalendar, expandedSegment])
 
   return (
     <>
       <QueryPeriodMenuKeybinds closeDropdown={closeDropdown} groups={groups} />
       <Transition
+        as="div"
         {...popover.transition.props}
         className={classNames(
-          'mt-2',
           popover.transition.classNames.fullwidth,
-          'md:left-auto md:w-56'
+          'mt-2 md:w-56 md:left-auto md:origin-top-right'
         )}
       >
         <Popover.Panel
@@ -162,18 +165,27 @@ const QueryPeriodMenuInner = ({
           {groups.map((group, index) => (
             <React.Fragment key={index}>
               {group.map(
-                ([[label, keyboardKey], { search, isActive, onEvent }]) => (
-                  <AppNavigationLink
-                    key={label}
-                    data-selected={isActive({ site, query })}
-                    className={linkClassName}
-                    search={search}
-                    onClick={onEvent && ((e) => onEvent(e))}
-                  >
-                    {label}
-                    {!!keyboardKey && <KeybindHint>{keyboardKey}</KeybindHint>}
-                  </AppNavigationLink>
-                )
+                ([
+                  [label, keyboardKey],
+                  { search, isActive, onEvent, hidden }
+                ]) => {
+                  if (!hidden) {
+                    return (
+                      <AppNavigationLink
+                        key={label}
+                        data-selected={isActive({ site, query })}
+                        className={linkClassName}
+                        search={search}
+                        onClick={onEvent && ((e) => onEvent(e))}
+                      >
+                        {label}
+                        {!!keyboardKey && (
+                          <KeybindHint>{keyboardKey}</KeybindHint>
+                        )}
+                      </AppNavigationLink>
+                    )
+                  }
+                }
               )}
               {index < groups.length - 1 && <MenuSeparator />}
             </React.Fragment>

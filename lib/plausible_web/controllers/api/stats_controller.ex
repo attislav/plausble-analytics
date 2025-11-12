@@ -5,7 +5,7 @@ defmodule PlausibleWeb.Api.StatsController do
   use PlausibleWeb.Plugs.ErrorHandler
 
   alias Plausible.Stats
-  alias Plausible.Stats.{Query, Comparisons, Filters, Time, TableDecider}
+  alias Plausible.Stats.{Query, Comparisons, Filters, Time, TableDecider, TimeOnPage}
   alias PlausibleWeb.Api.Helpers, as: H
 
   require Logger
@@ -101,6 +101,7 @@ defmodule PlausibleWeb.Api.StatsController do
          :ok <- validate_interval_granularity(site, params, dates),
          params <- realtime_period_to_30m(params),
          query = Query.from(site, params, debug_metadata(conn)),
+         query <- Query.set_include(query, :trim_relative_date_range, true),
          {:ok, metric} <- parse_and_validate_graph_metric(params, query) do
       {timeseries_result, comparison_result, _meta} = Stats.timeseries(site, query, [metric])
 
@@ -123,13 +124,7 @@ defmodule PlausibleWeb.Api.StatsController do
   end
 
   defp plot_timeseries(timeseries, metric) do
-    Enum.map(timeseries, fn row ->
-      case row[metric] do
-        nil -> 0
-        %{value: value} -> value
-        value -> value
-      end
-    end)
+    Enum.map(timeseries, & &1[metric])
   end
 
   defp label_timeseries(main_result, nil) do
@@ -153,7 +148,7 @@ defmodule PlausibleWeb.Api.StatsController do
          labels
        ) do
     date_range = Query.date_range(query)
-    build_intervals(labels, date_range, &Timex.beginning_of_week/1, &Timex.end_of_week/1)
+    build_intervals(labels, date_range, &Date.beginning_of_week/1, &Date.end_of_week/1)
   end
 
   defp build_full_intervals(
@@ -161,7 +156,7 @@ defmodule PlausibleWeb.Api.StatsController do
          labels
        ) do
     date_range = Query.date_range(query)
-    build_intervals(labels, date_range, &Timex.beginning_of_month/1, &Timex.end_of_month/1)
+    build_intervals(labels, date_range, &Date.beginning_of_month/1, &Date.end_of_month/1)
   end
 
   defp build_full_intervals(_query, _labels) do
@@ -188,7 +183,6 @@ defmodule PlausibleWeb.Api.StatsController do
 
   def top_stats(conn, params) do
     site = conn.assigns[:site]
-    current_user = conn.assigns[:current_user]
 
     params = realtime_period_to_30m(params)
 
@@ -200,14 +194,16 @@ defmodule PlausibleWeb.Api.StatsController do
     %{
       top_stats: top_stats,
       meta: meta,
-      sample_percent: sample_percent
-    } = fetch_top_stats(site, query, current_user)
+      sample_percent: sample_percent,
+      graphable_metrics: graphable_metrics
+    } = fetch_top_stats(site, query)
 
     comparison_query = comparison_query(query)
 
     json(conn, %{
       top_stats: top_stats,
       meta: meta,
+      graphable_metrics: graphable_metrics,
       interval: query.interval,
       sample_percent: sample_percent,
       with_imported_switch: with_imported_switch_info(meta),
@@ -247,7 +243,7 @@ defmodule PlausibleWeb.Api.StatsController do
       "day" ->
         current_date =
           DateTime.now!(site.timezone)
-          |> Timex.to_date()
+          |> DateTime.to_date()
           |> Date.to_string()
 
         Enum.find_index(dates, &(&1 == current_date))
@@ -257,7 +253,7 @@ defmodule PlausibleWeb.Api.StatsController do
 
         current_date =
           DateTime.now!(site.timezone)
-          |> Timex.to_date()
+          |> DateTime.to_date()
           |> Time.date_or_weekstart(date_range)
           |> Date.to_string()
 
@@ -266,8 +262,8 @@ defmodule PlausibleWeb.Api.StatsController do
       "month" ->
         current_date =
           DateTime.now!(site.timezone)
-          |> Timex.to_date()
-          |> Timex.beginning_of_month()
+          |> DateTime.to_date()
+          |> Date.beginning_of_month()
           |> Date.to_string()
 
         Enum.find_index(dates, &(&1 == current_date))
@@ -281,21 +277,22 @@ defmodule PlausibleWeb.Api.StatsController do
     end
   end
 
-  defp fetch_top_stats(site, query, current_user) do
-    goal_filter? = toplevel_goal_filter?(query)
+  defp fetch_top_stats(site, query) do
+    goal_filter? =
+      toplevel_goal_filter?(query)
 
     cond do
-      query.period == "30m" && goal_filter? ->
+      query.input_date_range == "30m" && goal_filter? ->
         fetch_goal_realtime_top_stats(site, query)
 
-      query.period == "30m" ->
+      query.input_date_range == "30m" ->
         fetch_realtime_top_stats(site, query)
 
       goal_filter? ->
         fetch_goal_top_stats(site, query)
 
       true ->
-        fetch_other_top_stats(site, query, current_user)
+        fetch_other_top_stats(site, query)
     end
   end
 
@@ -328,7 +325,12 @@ defmodule PlausibleWeb.Api.StatsController do
       }
     ]
 
-    %{top_stats: top_stats, meta: meta, sample_percent: 100}
+    %{
+      top_stats: top_stats,
+      meta: meta,
+      graphable_metrics: [:visitors, :events],
+      sample_percent: 100
+    }
   end
 
   defp fetch_realtime_top_stats(site, query) do
@@ -360,7 +362,12 @@ defmodule PlausibleWeb.Api.StatsController do
       }
     ]
 
-    %{top_stats: top_stats, meta: meta, sample_percent: 100}
+    %{
+      top_stats: top_stats,
+      meta: meta,
+      sample_percent: 100,
+      graphable_metrics: [:visitors, :pageviews]
+    }
   end
 
   defp fetch_goal_top_stats(site, query) do
@@ -383,30 +390,22 @@ defmodule PlausibleWeb.Api.StatsController do
       ]
       |> Enum.reject(&is_nil/1)
 
-    %{top_stats: top_stats, meta: meta, sample_percent: 100}
+    %{top_stats: top_stats, meta: meta, graphable_metrics: metrics, sample_percent: 100}
   end
 
-  defp fetch_other_top_stats(site, query, current_user) do
+  defp fetch_other_top_stats(site, query) do
     page_filter? =
       Filters.filtering_on_dimension?(query, "event:page", behavioral_filters: :ignore)
-
-    include_scroll_depth? = Plausible.Stats.ScrollDepth.feature_visible?(site, current_user)
 
     metrics = [:visitors, :visits, :pageviews, :sample_percent]
 
     metrics =
       cond do
-        page_filter? && include_scroll_depth? && query.include_imported ->
+        page_filter? && query.include_imported ->
           metrics ++ [:scroll_depth]
 
-        page_filter? && include_scroll_depth? ->
-          metrics ++ [:bounce_rate, :scroll_depth, :time_on_page]
-
-        page_filter? && query.include_imported ->
-          metrics
-
         page_filter? ->
-          metrics ++ [:bounce_rate, :time_on_page]
+          metrics ++ [:bounce_rate, :scroll_depth, :time_on_page]
 
         true ->
           metrics ++ [:views_per_visit, :bounce_rate, :visit_duration]
@@ -434,7 +433,16 @@ defmodule PlausibleWeb.Api.StatsController do
 
     sample_percent = results[:sample_percent][:value]
 
-    %{top_stats: top_stats, meta: meta, sample_percent: sample_percent}
+    %{
+      top_stats: top_stats,
+      meta: meta,
+      graphable_metrics:
+        if(TimeOnPage.new_time_on_page_visible?(site),
+          do: metrics,
+          else: metrics -- [:time_on_page]
+        ),
+      sample_percent: sample_percent
+    }
   end
 
   defp top_stats_entry(current_results, name, key, opts \\ []) do
@@ -573,7 +581,7 @@ defmodule PlausibleWeb.Api.StatsController do
         Filters.filtering_on_dimension?(query, "event:page") ->
           {:error, {:invalid_funnel_query, "pages"}}
 
-        query.period == "realtime" ->
+        query.input_date_range == "realtime" ->
           {:error, {:invalid_funnel_query, "realtime period"}}
 
         true ->
@@ -769,7 +777,7 @@ defmodule PlausibleWeb.Api.StatsController do
 
     is_admin =
       if current_user = conn.assigns[:current_user] do
-        Plausible.Teams.Memberships.has_admin_access?(site, current_user)
+        Plausible.Teams.Memberships.has_editor_access?(site, current_user)
       else
         false
       end
@@ -781,34 +789,33 @@ defmodule PlausibleWeb.Api.StatsController do
 
     search = params["search"] || ""
 
-    not_configured_error_payload =
-      %{
-        error: "The site is not connected to Google Search Keywords",
-        reason: :not_configured,
-        is_admin: is_admin
-      }
+    not_configured_error_payload = %{error_code: :not_configured, is_admin: is_admin}
 
-    unsupported_filters_error_payload = %{
-      error:
-        "Unable to fetch keyword data from Search Console because it does not support the current set of filters",
-      reason: :unsupported_filters
-    }
+    search_terms = google_api().fetch_stats(site, query, pagination, search)
+    period_too_recent? = DateTime.diff(query.now, query.utc_time_range.first, :hour) < 72
 
-    case google_api().fetch_stats(site, query, pagination, search) do
-      {:error, :google_property_not_configured} ->
+    case {search_terms, period_too_recent?} do
+      {{:error, :google_property_not_configured}, _} ->
         conn
         |> put_status(422)
         |> json(not_configured_error_payload)
 
-      {:error, :unsupported_filters} ->
+      {{:error, :unsupported_filters}, _} ->
         conn
         |> put_status(422)
-        |> json(unsupported_filters_error_payload)
+        |> json(%{error_code: :unsupported_filters})
 
-      {:ok, terms} ->
+      {{:ok, []}, _period_too_recent? = true} ->
+        # We consider this an error case because Google Search Console
+        # data is usually delayed 1-3 days.
+        conn
+        |> put_status(422)
+        |> json(%{error_code: :period_too_recent})
+
+      {{:ok, terms}, _} ->
         json(conn, %{results: terms})
 
-      {:error, error} ->
+      {{:error, error}, _} ->
         Logger.error("Plausible.Google.API.fetch_stats failed with error: `#{inspect(error)}`")
 
         conn
@@ -847,23 +854,15 @@ defmodule PlausibleWeb.Api.StatsController do
 
   def pages(conn, params) do
     site = conn.assigns[:site]
-    current_user = conn.assigns[:current_user]
 
     params = Map.put(params, "property", "event:page")
     query = Query.from(site, params, debug_metadata(conn))
 
-    include_scroll_depth? = Plausible.Stats.ScrollDepth.feature_visible?(site, current_user)
-
     extra_metrics =
-      cond do
-        params["detailed"] && include_scroll_depth? ->
-          [:pageviews, :bounce_rate, :time_on_page, :scroll_depth]
-
-        params["detailed"] ->
-          [:pageviews, :bounce_rate, :time_on_page]
-
-        true ->
-          []
+      if params["detailed"] do
+        [:pageviews, :bounce_rate, :time_on_page, :scroll_depth]
+      else
+        []
       end
 
     metrics = breakdown_metrics(query, extra_metrics)
@@ -881,11 +880,7 @@ defmodule PlausibleWeb.Api.StatsController do
         |> transform_keys(%{visitors: :conversions})
         |> to_csv([:name, :conversions, :conversion_rate])
       else
-        cols = [:name, :visitors, :pageviews, :bounce_rate, :time_on_page]
-
-        # credo:disable-for-next-line Credo.Check.Refactor.Nesting
-        cols = if include_scroll_depth?, do: cols ++ [:scroll_depth], else: cols
-
+        cols = [:name, :visitors, :pageviews, :bounce_rate, :time_on_page, :scroll_depth]
         pages |> to_csv(cols)
       end
     else
@@ -902,7 +897,7 @@ defmodule PlausibleWeb.Api.StatsController do
     params = Map.put(params, "property", "visit:entry_page")
     query = Query.from(site, params, debug_metadata(conn))
     pagination = parse_pagination(params)
-    metrics = breakdown_metrics(query, [:visits, :visit_duration])
+    metrics = breakdown_metrics(query, [:visits, :visit_duration, :bounce_rate])
 
     %{results: results, meta: meta} = Stats.breakdown(site, query, metrics, pagination)
 
@@ -918,10 +913,11 @@ defmodule PlausibleWeb.Api.StatsController do
           :conversion_rate
         ])
       else
-        to_csv(entry_pages, [:name, :visitors, :visits, :visit_duration], [
+        to_csv(entry_pages, [:name, :visitors, :visits, :bounce_rate, :visit_duration], [
           :name,
           :unique_entrances,
           :total_entrances,
+          :bounce_rate,
           :visit_duration
         ])
       end
@@ -939,13 +935,20 @@ defmodule PlausibleWeb.Api.StatsController do
     params = Map.put(params, "property", "visit:exit_page")
     query = Query.from(site, params, debug_metadata(conn))
     {limit, page} = parse_pagination(params)
-    metrics = breakdown_metrics(query, [:visits])
+
+    extra_metrics =
+      if TableDecider.sessions_join_events?(query) do
+        [:visits]
+      else
+        [:visits, :exit_rate]
+      end
+
+    metrics = breakdown_metrics(query, extra_metrics)
 
     %{results: results, meta: meta} = Stats.breakdown(site, query, metrics, {limit, page})
 
     exit_pages =
       results
-      |> add_exit_rate(site, query, limit)
       |> transform_keys(%{exit_page: :name})
 
     if params["csv"] do
@@ -969,37 +972,6 @@ defmodule PlausibleWeb.Api.StatsController do
         meta: Stats.Breakdown.formatted_date_ranges(query),
         skip_imported_reason: meta[:imports_skip_reason]
       })
-    end
-  end
-
-  defp add_exit_rate(breakdown_results, site, query, limit) do
-    if TableDecider.sessions_join_events?(query) do
-      breakdown_results
-    else
-      pages = Enum.map(breakdown_results, & &1[:exit_page])
-
-      total_pageviews_query =
-        query
-        |> struct!(order_by: [])
-        |> Query.remove_top_level_filters(["visit:exit_page"])
-        |> Query.add_filter([:is, "event:page", pages])
-        |> Query.set(dimensions: ["event:page"])
-
-      %{results: total_pageviews} =
-        Stats.breakdown(site, total_pageviews_query, [:pageviews], {limit, 1})
-
-      Enum.map(breakdown_results, fn result ->
-        exit_rate =
-          case Enum.find(total_pageviews, &(&1[:page] == result[:exit_page])) do
-            %{pageviews: pageviews} ->
-              Float.floor(result[:visits] / pageviews * 100)
-
-            nil ->
-              nil
-          end
-
-        Map.put(result, :exit_rate, exit_rate)
-      end)
     end
   end
 
@@ -1456,13 +1428,20 @@ defmodule PlausibleWeb.Api.StatsController do
 
   def filter_suggestions(conn, params) do
     site = conn.assigns[:site]
+    search_query = params["q"]
 
-    query = Query.from(site, params, debug_metadata(conn))
+    if is_nil(search_query) do
+      conn
+      |> put_status(:bad_request)
+      |> json(%{"error" => "Search parameter 'q' is required"})
+    else
+      query = Query.from(site, params, debug_metadata(conn))
 
-    json(
-      conn,
-      Stats.filter_suggestions(site, query, params["filter_name"], params["q"])
-    )
+      json(
+        conn,
+        Stats.filter_suggestions(site, query, params["filter_name"], search_query)
+      )
+    end
   end
 
   def custom_prop_value_filter_suggestions(conn, %{"prop_key" => prop_key} = params) do
@@ -1662,6 +1641,9 @@ defmodule PlausibleWeb.Api.StatsController do
   defp realtime_period_to_30m(params), do: params
 
   defp toplevel_goal_filter?(query) do
-    Filters.filtering_on_dimension?(query, "event:goal", max_depth: 0)
+    Filters.filtering_on_dimension?(query, "event:goal",
+      max_depth: 0,
+      behavioral_filters: :ignore
+    )
   end
 end

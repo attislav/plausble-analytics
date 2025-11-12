@@ -4,7 +4,7 @@ defmodule Plausible.Stats.Query do
   defstruct utc_time_range: nil,
             comparison_utc_time_range: nil,
             interval: nil,
-            period: nil,
+            input_date_range: nil,
             dimensions: [],
             filters: [],
             sample_threshold: 20_000_000,
@@ -26,23 +26,33 @@ defmodule Plausible.Stats.Query do
             revenue_warning: nil,
             remove_unavailable_revenue_metrics: false,
             site_id: nil,
-            site_native_stats_start_at: nil
+            consolidated_site_ids: nil,
+            site_native_stats_start_at: nil,
+            # Contains information to determine how to combine legacy and new time on page metrics
+            time_on_page_data: %{},
+            sql_join_type: :left,
+            smear_session_metrics: false
 
   require OpenTelemetry.Tracer, as: Tracer
   alias Plausible.Stats.{DateTimeRange, Filters, Imported, Legacy, Comparisons}
 
   @type t :: %__MODULE__{}
 
-  def build(site, schema_type, params, debug_metadata) do
+  def build(
+        %Plausible.Site{domain: domain} = site,
+        schema_type,
+        %{"site_id" => domain} = params,
+        debug_metadata \\ %{}
+      ) do
     with {:ok, query_data} <- Filters.QueryParser.parse(site, schema_type, params) do
       query =
         %__MODULE__{
-          now: DateTime.utc_now(:second),
           debug_metadata: debug_metadata,
           site_id: site.id,
           site_native_stats_start_at: site.native_stats_start_at
         }
         |> struct!(Map.to_list(query_data))
+        |> set_time_on_page_data(site)
         |> put_comparison_utc_time_range()
         |> put_imported_opts(site)
 
@@ -54,8 +64,15 @@ defmodule Plausible.Stats.Query do
     end
   end
 
+  def build!(site, schema_type, params, debug_metadata \\ %{}) do
+    case build(site, schema_type, params, debug_metadata) do
+      {:ok, query} -> query
+      {:error, reason} -> raise "Failed to build query: #{inspect(reason)}"
+    end
+  end
+
   @doc """
-  Builds query from old-style params. New code should prefer Query.build
+  Builds query from old-style stats APIv1 params. New code should use `Query.build`.
   """
   def from(site, params, debug_metadata \\ %{}, now \\ nil) do
     Legacy.QueryBuilder.from(site, params, debug_metadata, now)
@@ -154,7 +171,7 @@ defmodule Plausible.Stats.Query do
     )
   end
 
-  defp get_imports_in_range(_site, %__MODULE__{period: period})
+  defp get_imports_in_range(_site, %__MODULE__{input_date_range: period})
        when period in ["realtime", "30m"] do
     []
   end
@@ -171,6 +188,15 @@ defmodule Plausible.Stats.Query do
       end
 
     in_comparison_range ++ in_range
+  end
+
+  def set_time_on_page_data(query, site) do
+    struct!(query,
+      time_on_page_data: %{
+        new_metric_visible: Plausible.Stats.TimeOnPage.new_time_on_page_visible?(site),
+        cutoff_date: site.legacy_time_on_page_cutoff
+      }
+    )
   end
 
   @spec get_skip_imported_reason(t()) ::
@@ -207,7 +233,6 @@ defmodule Plausible.Stats.Query do
 
     Tracer.set_attributes([
       {"plausible.query.interval", query.interval},
-      {"plausible.query.period", query.period},
       {"plausible.query.dimensions", query.dimensions |> Enum.join(";")},
       {"plausible.query.include_imported", query.include_imported},
       {"plausible.query.filter_keys", filter_dimensions},

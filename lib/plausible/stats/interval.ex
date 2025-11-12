@@ -31,7 +31,7 @@ defmodule Plausible.Stats.Interval do
     case period do
       period when period in ["realtime", "30m"] -> "minute"
       "day" -> "hour"
-      period when period in ["custom", "7d", "30d", "month"] -> "day"
+      period when period in ["custom", "7d", "28d", "30d", "91d", "month"] -> "day"
       period when period in ["6mo", "12mo", "year"] -> "month"
     end
   end
@@ -42,7 +42,7 @@ defmodule Plausible.Stats.Interval do
   """
   def default_for_date_range(%DateTimeRange{first: first, last: last}) do
     cond do
-      Timex.diff(last, first, :months) > 0 ->
+      Plausible.Times.diff(last, first, :month) > 0 ->
         "month"
 
       DateTime.diff(last, first, :day) > 0 ->
@@ -57,8 +57,10 @@ defmodule Plausible.Stats.Interval do
     "realtime" => ["minute"],
     "day" => ["minute", "hour"],
     "7d" => ["hour", "day"],
-    "month" => ["day", "week"],
+    "28d" => ["day", "week"],
     "30d" => ["day", "week"],
+    "91d" => ["day", "week", "month"],
+    "month" => ["day", "week"],
     "6mo" => ["day", "week", "month"],
     "12mo" => ["day", "week", "month"],
     "year" => ["day", "week", "month"],
@@ -73,7 +75,7 @@ defmodule Plausible.Stats.Interval do
     table =
       with %Date{} = from <- Keyword.get(opts, :from),
            %Date{} = to <- Keyword.get(opts, :to),
-           true <- abs(Timex.diff(from, to, :months)) > 12 do
+           true <- abs(Plausible.Times.diff(from, to, :month)) > 12 do
         Map.replace(@valid_by_period, "custom", ["week", "month"])
       else
         _ ->
@@ -81,7 +83,7 @@ defmodule Plausible.Stats.Interval do
       end
 
     with %Date{} = stats_start <- Plausible.Sites.stats_start_date(site),
-         true <- abs(Timex.diff(Date.utc_today(), stats_start, :months)) > 12 do
+         true <- abs(Plausible.Times.diff(Date.utc_today(), stats_start, :month)) > 12 do
       Map.replace(table, "all", ["week", "month"])
     else
       _ ->

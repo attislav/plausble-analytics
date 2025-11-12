@@ -3,6 +3,12 @@ defmodule PlausibleWeb.Live.GoalSettings.FormTest do
   import Phoenix.LiveViewTest
   import Plausible.Test.Support.HTML
 
+  on_ee do
+    import Plausible.Teams.Test
+  end
+
+  @revenue_goal_settings ~s|div[data-test-id="revenue-goal-settings"]|
+
   describe "integration - live rendering" do
     setup [:create_user, :log_in, :create_site]
 
@@ -12,20 +18,19 @@ defmodule PlausibleWeb.Live.GoalSettings.FormTest do
 
       html = lv |> render()
 
+      assert html =~ "Add goal for #{site.domain}"
       assert element_exists?(html, ~s/a#pageview-tab/)
       assert element_exists?(html, ~s/a#event-tab/)
 
       pageview_tab = lv |> element(~s/a#pageview-tab/) |> render_click()
-      assert pageview_tab =~ "Page Path"
+      assert pageview_tab =~ "Page path"
 
       event_tab = lv |> element(~s/a#event-tab/) |> render_click()
-      assert event_tab =~ "Event Name"
+      assert event_tab =~ "Event name"
     end
 
     test "can navigate to scroll tab if scroll_depth feature visible for site/user",
          %{conn: conn, site: site} do
-      Plausible.Sites.set_scroll_depth_visible_at(site)
-
       lv = get_liveview(conn, site)
       lv |> element(~s/a#scroll-tab/) |> render_click()
       html = render(lv)
@@ -33,12 +38,6 @@ defmodule PlausibleWeb.Live.GoalSettings.FormTest do
       assert "goal[scroll_threshold]" in input_names
       assert "goal[page_path]" in input_names
       assert "goal[display_name]" in input_names
-    end
-
-    test "does not render scroll tab if scroll_depth feature not visible for site/user",
-         %{conn: conn, site: site} do
-      html = get_liveview(conn, site) |> render()
-      refute element_exists?(html, ~s/a#scroll-tab/)
     end
   end
 
@@ -130,10 +129,35 @@ defmodule PlausibleWeb.Live.GoalSettings.FormTest do
       assert html =~ "Custom Event"
     end
 
+    on_ee do
+      test "creates a custom event for consolidated view (revenue switch not available)", %{
+        conn: conn,
+        user: user
+      } do
+        {:ok, team} = Plausible.Teams.get_or_create(user)
+        site = new_consolidated_view(team)
+
+        lv = get_liveview(conn, site)
+
+        assert render(lv) =~ "Add goal for consolidated view"
+        refute element_exists?(render(lv), @revenue_goal_settings)
+
+        lv
+        |> element("#goals-form-modalseq0 form")
+        |> render_submit(%{goal: %{event_name: "SampleCustomEvent"}})
+
+        html = render(lv)
+        assert html =~ "SampleCustomEvent"
+        assert html =~ "Custom Event"
+      end
+    end
+
     @tag :ee_only
     test "creates a revenue goal", %{conn: conn, site: site} do
       lv = get_liveview(conn, site)
       refute render(lv) =~ "SampleRevenueGoal"
+
+      assert element_exists?(render(lv), @revenue_goal_settings)
 
       lv
       |> element("#goals-form-modalseq0 form")
@@ -192,11 +216,7 @@ defmodule PlausibleWeb.Live.GoalSettings.FormTest do
 
       refute element_exists?(html, "#pageviews-form")
       assert element_exists?(html, "#custom-events-form")
-
-      assert element_exists?(
-               html,
-               ~s/button[role=switch][aria-labelledby=enable-revenue-tracking][disabled="disabled"]/
-             )
+      refute String.downcase(text_of_element(html, "#custom-events-form")) =~ "currency"
 
       # revenue goals
       lv |> element(~s/button#edit-goal-#{revenue_goal.id}/) |> render_click()
@@ -204,11 +224,7 @@ defmodule PlausibleWeb.Live.GoalSettings.FormTest do
 
       refute element_exists?(html, "#pageviews-form")
       assert element_exists?(html, "#custom-events-form")
-
-      assert element_exists?(
-               html,
-               ~s/button[role=switch][aria-labelledby=enable-revenue-tracking][disabled="disabled"]/
-             )
+      assert element_exists?(html, ~s/[data-test-id=goal-currency-label]/)
     end
 
     test "updates a custom event", %{conn: conn, site: site} do
@@ -264,7 +280,7 @@ defmodule PlausibleWeb.Live.GoalSettings.FormTest do
       lv |> element(~s/button#edit-goal-#{g.id}/) |> render_click()
 
       html = render(lv)
-      assert element_exists?(html, ~s|#page_path_input_modalseq0[value="/go/to/blog/**"|)
+      assert element_exists?(html, ~s|#page_path_input_modalseq0[value="/go/to/blog/**"]|)
 
       lv
       |> element("#goals-form-modalseq0 form")
@@ -285,7 +301,7 @@ defmodule PlausibleWeb.Live.GoalSettings.FormTest do
       lv |> element(~s/button#edit-goal-#{g.id}/) |> render_click()
 
       html = render(lv)
-      assert element_exists?(html, ~s|#page_path_input_modalseq0[value="/go/to/blog/**"|)
+      assert element_exists?(html, ~s|#page_path_input_modalseq0[value="/go/to/blog/**"]|)
 
       lv
       |> element("#goals-form-modalseq0 form")
