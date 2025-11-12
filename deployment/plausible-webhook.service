@@ -1,0 +1,21 @@
+[Unit]
+Description=Plausible Analytics GitHub Webhook Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/plausible
+Environment="WEBHOOK_SECRET=YOUR_SECRET_HERE_CHANGE_ME"
+ExecStart=/usr/bin/python3 /opt/plausible/deployment/webhook_server.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/plausible-webhook.log
+StandardError=append:/var/log/plausible-webhook.log
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
