@@ -30,6 +30,17 @@ function valueRenderProps(listItem: ListItem, metric: Metric) {
   return { value, comparison }
 }
 
+const NUMBER_METRICS: Metric[] = [
+  'visitors',
+  'visits',
+  'pageviews',
+  'events'
+]
+
+function isNumberMetric(metric: Metric): boolean {
+  return NUMBER_METRICS.includes(metric)
+}
+
 export default function MetricValue(props: {
   listItem: ListItem
   metric: Metric
@@ -51,6 +62,20 @@ export default function MetricValue(props: {
     return <span data-testid="metric-value">{shortFormatter(value)}</span>
   }
 
+  const isNew =
+    comparison &&
+    (comparison.value === 0 || comparison.value === null) &&
+    value !== null &&
+    value > 0
+
+  const absoluteChange =
+    comparison &&
+    value !== null &&
+    comparison.value !== null &&
+    isNumberMetric(metric)
+      ? value - comparison.value
+      : undefined
+
   return (
     <Tooltip
       info={
@@ -64,12 +89,16 @@ export default function MetricValue(props: {
     >
       <span className="cursor-default" data-testid="metric-value">
         {shortFormatter(value)}
-        {comparison ? (
+        {isNew ? (
+          <span className="inline-block pl-1 text-xs font-bold text-green-500">
+            NEW
+          </span>
+        ) : comparison ? (
           <ChangeArrow
             change={comparison.change}
             metric={metric}
-            className="inline-block pl-1 w-4"
-            hideNumber
+            className="inline-block pl-1"
+            absoluteChange={absoluteChange}
           />
         ) : null}
       </span>
@@ -103,6 +132,11 @@ function ComparisonTooltipContent({
   }, [metricLabel])
 
   if (comparison && meta) {
+    const absoluteDiff =
+      value !== null && comparison.value !== null
+        ? value - comparison.value
+        : null
+
     return (
       <div className="text-left whitespace-nowrap py-1 space-y-2">
         <div>
@@ -118,6 +152,12 @@ function ComparisonTooltipContent({
           </div>
           <div className="font-normal text-xs">{meta.date_range_label}</div>
         </div>
+        {absoluteDiff !== null && isNumberMetric(metric) && (
+          <div className="text-xs text-gray-100">
+            {absoluteDiff > 0 ? '+' : ''}
+            {longFormatter(Math.abs(absoluteDiff))} {absoluteDiff >= 0 ? 'more' : 'fewer'}{label}
+          </div>
+        )}
         <div>vs</div>
         <div>
           <div className="font-bold text-base">
