@@ -1,6 +1,6 @@
 import React, { useState, ReactNode, useMemo } from 'react'
 
-import { useQueryContext } from '../../query-context'
+import { useDashboardStateContext } from '../../dashboard-state-context'
 import { usePaginatedGetAPI } from '../../hooks/api-client'
 import { rootRoute } from '../../router'
 import {
@@ -11,12 +11,14 @@ import {
   useRememberOrderBy
 } from '../../hooks/use-order-by'
 import { Metric } from '../reports/metrics'
-import { BreakdownResultMeta, DashboardQuery } from '../../query'
+import * as metricsModule from '../reports/metrics'
+import { BreakdownResultMeta, DashboardState } from '../../dashboard-state'
 import { ColumnConfiguraton } from '../../components/table'
 import { BreakdownTable } from './breakdown-table'
 import { useSiteContext } from '../../site-context'
 import { DrilldownLink, FilterInfo } from '../../components/drilldown-link'
 import { SharedReportProps } from '../reports/list'
+import { hasConversionGoalFilter } from '../../util/filters'
 
 export type ReportInfo = {
   /** Title of the report to render on the top left. */
@@ -32,9 +34,11 @@ export type ReportInfo = {
 type BreakdownModalProps = {
   /** Dimension and title of the breakdown. */
   reportInfo: ReportInfo
-  /** Function that must return a new query that contains appropriate search filter for searchValue param. */
-  addSearchFilter?: (q: DashboardQuery, searchValue: string) => DashboardQuery
+  /** Function that must return a new dashboardState that contains appropriate search filter for searchValue param. */
+  addSearchFilter?: (q: DashboardState, searchValue: string) => DashboardState
   searchEnabled?: boolean
+  /** When true, keep the percentage metric as a permanently visible, sortable column. */
+  showPercentageColumn?: boolean
 }
 
 /**
@@ -43,7 +47,7 @@ type BreakdownModalProps = {
 
   BreakdownModal is expected to be rendered inside a `<Modal>`, which has it's own
   specific URL pathname (e.g. /plausible.io/sources). During the lifecycle of a
-  BreakdownModal, the `query` object is not expected to change.
+  BreakdownModal, the `dashboardState` object is not expected to change.
 
   ### Search As You Type
   @see BreakdownTable
@@ -62,51 +66,63 @@ export default function BreakdownModal<TListItem extends { name: string }>({
   renderIcon,
   getExternalLinkUrl,
   searchEnabled = true,
+  showPercentageColumn = false,
   afterFetchData,
   afterFetchNextPage,
   addSearchFilter,
   getFilterInfo
 }: Omit<SharedReportProps<TListItem>, 'fetchData'> & BreakdownModalProps) {
   const site = useSiteContext()
-  const { query } = useQueryContext()
+  const { dashboardState } = useDashboardStateContext()
   const [meta, setMeta] = useState<BreakdownResultMeta | null>(null)
+
+  const breakdownMetrics = useMemo(() => {
+    const hasPercentage = metrics.some((m) => m.key === 'percentage')
+    if (!hasPercentage && !hasConversionGoalFilter(dashboardState)) {
+      return [...metrics, metricsModule.createPercentage()]
+    }
+    return metrics
+  }, [metrics, dashboardState])
 
   const [search, setSearch] = useState('')
   const defaultOrderBy = getStoredOrderBy({
     domain: site.domain,
     reportInfo,
-    metrics,
+    metrics: breakdownMetrics,
     fallbackValue: reportInfo.defaultOrder ? [reportInfo.defaultOrder] : []
   })
   const { orderBy, orderByDictionary, toggleSortByMetric } = useOrderBy({
-    metrics,
+    metrics: breakdownMetrics,
     defaultOrderBy
   })
   useRememberOrderBy({
     effectiveOrderBy: orderBy,
-    metrics,
+    metrics: breakdownMetrics,
     reportInfo
   })
   const apiState = usePaginatedGetAPI<
     { results: Array<TListItem>; meta: BreakdownResultMeta },
-    [string, { query: DashboardQuery; search: string; orderBy: OrderBy }]
+    [
+      string,
+      { dashboardState: DashboardState; search: string; orderBy: OrderBy }
+    ]
   >({
-    key: [reportInfo.endpoint, { query, search, orderBy }],
+    key: [reportInfo.endpoint, { dashboardState, search, orderBy }],
     getRequestParams: (key) => {
-      const [_endpoint, { query, search }] = key
+      const [_endpoint, { dashboardState, search }] = key
 
-      let queryWithSearchFilter = { ...query }
+      let dashboardStateWithSearchFilter = { ...dashboardState }
 
       if (
         searchEnabled &&
         typeof addSearchFilter === 'function' &&
         search !== ''
       ) {
-        queryWithSearchFilter = addSearchFilter(query, search)
+        dashboardStateWithSearchFilter = addSearchFilter(dashboardState, search)
       }
 
       return [
-        queryWithSearchFilter,
+        dashboardStateWithSearchFilter,
         {
           detailed: true,
           order_by: JSON.stringify(orderBy)
@@ -125,7 +141,7 @@ export default function BreakdownModal<TListItem extends { name: string }>({
       {
         label: reportInfo.dimensionLabel,
         key: 'name',
-        width: 'w-48 md:w-full flex items-center break-all',
+        width: 'w-40 md:w-48',
         align: 'left',
         renderItem: (item) => (
           <NameCell
@@ -136,29 +152,39 @@ export default function BreakdownModal<TListItem extends { name: string }>({
           />
         )
       },
-      ...metrics.map(
-        (m): ColumnConfiguraton<TListItem> => ({
-          label: m.renderLabel(query),
-          key: m.key,
-          width: m.width,
-          align: 'right',
-          metricWarning: getMetricWarning(m, meta),
-          renderValue: (item) => m.renderValue(item, meta),
-          onSort: m.sortable ? () => toggleSortByMetric(m) : undefined,
-          sortDirection: orderByDictionary[m.key]
-        })
-      )
+      ...breakdownMetrics
+        .filter((m) => showPercentageColumn || m.key !== 'percentage')
+        .map(
+          (m): ColumnConfiguraton<TListItem> => ({
+            label: m.renderLabel(dashboardState),
+            key: m.key,
+            width: m.width,
+            align: 'right',
+            metricWarning: getMetricWarning(m, meta),
+            renderValue: (item, isRowHovered) =>
+              m.renderValue(
+                showPercentageColumn && m.key === 'visitors'
+                  ? { ...item, percentage: null }
+                  : item,
+                meta,
+                { detailedView: true, isRowHovered }
+              ),
+            onSort: m.sortable ? () => toggleSortByMetric(m) : undefined,
+            sortDirection: orderByDictionary[m.key]
+          })
+        )
     ],
     [
       reportInfo.dimensionLabel,
-      metrics,
+      breakdownMetrics,
       getFilterInfo,
-      query,
+      dashboardState,
       orderByDictionary,
       toggleSortByMetric,
       renderIcon,
       getExternalLinkUrl,
-      meta
+      meta,
+      showPercentageColumn
     ]
   )
 
@@ -190,7 +216,7 @@ const NameCell = <TListItem extends { name: string }>({
   renderIcon?: (item: TListItem) => ReactNode
   getExternalLinkUrl?: (listItem: TListItem) => string
 }) => (
-  <>
+  <div className="max-w-full break-all flex items-center">
     {typeof renderIcon === 'function' && renderIcon(item)}
     <DrilldownLink
       path={rootRoute.path}
@@ -203,7 +229,7 @@ const NameCell = <TListItem extends { name: string }>({
     {typeof getExternalLinkUrl === 'function' && (
       <ExternalLinkIcon url={getExternalLinkUrl(item)} />
     )}
-  </>
+  </div>
 )
 
 const ExternalLinkIcon = ({ url }: { url?: string }) =>
@@ -231,6 +257,9 @@ const getMetricWarning = (metric: Metric, meta: BreakdownResultMeta | null) => {
   if (warnings && warnings[metric.key]) {
     const { code, message } = warnings[metric.key]
 
+    if (metric.key == 'bounce_rate' && code == 'no_imported_bounce_rate') {
+      return 'Does not include imported data'
+    }
     if (metric.key == 'scroll_depth' && code == 'no_imported_scroll_depth') {
       return 'Does not include imported data'
     }

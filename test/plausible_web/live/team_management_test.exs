@@ -1,10 +1,8 @@
 defmodule PlausibleWeb.Live.TeamMangementTest do
   use PlausibleWeb.ConnCase, async: false
   use Bamboo.Test, shared: true
-  use Plausible.Teams.Test
 
   import Phoenix.LiveViewTest
-  import Plausible.Test.Support.HTML
 
   def team_general_path(), do: Routes.settings_path(PlausibleWeb.Endpoint, :team_general)
   @subject_prefix if ee?(), do: "[Plausible Analytics] ", else: "[Plausible CE] "
@@ -188,7 +186,7 @@ defmodule PlausibleWeb.Live.TeamMangementTest do
       add_invite(lv, "new4@example.com", "admin")
 
       assert lv |> render() |> text() =~ "Your account is limited to 3 team members"
-      assert Enum.count(Plausible.Teams.Invitations.all(team)) == 3
+      assert Enum.count(Plausible.Teams.Invitations.pending_team_invitations_for(team)) == 3
     end
 
     test "fails to accept invitation to already existing e-mail", %{

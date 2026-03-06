@@ -2,26 +2,34 @@ import React, { useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 
 import Modal from './modal'
-import { addFilter, revenueAvailable } from '../../query'
-import { specialTitleWhenGoalFilter } from '../behaviours/goal-conversions'
-import { EVENT_PROPS_PREFIX, hasConversionGoalFilter } from '../../util/filters'
+import { addFilter, revenueAvailable } from '../../dashboard-state'
+import { getSpecialGoal } from '../../util/goals'
+import {
+  EVENT_PROPS_PREFIX,
+  getGoalFilter,
+  hasConversionGoalFilter
+} from '../../util/filters'
 import BreakdownModal from './breakdown-modal'
 import * as metrics from '../reports/metrics'
 import * as url from '../../util/url'
-import { useQueryContext } from '../../query-context'
+import { useDashboardStateContext } from '../../dashboard-state-context'
 import { useSiteContext } from '../../site-context'
 import { SortDirection } from '../../hooks/use-order-by'
 
 function PropsModal() {
-  const { query } = useQueryContext()
+  const { dashboardState } = useDashboardStateContext()
   const site = useSiteContext()
   const { propKey } = useParams()
 
   /*global BUILD_EXTRA*/
-  const showRevenueMetrics = BUILD_EXTRA && revenueAvailable(query, site)
+  const showRevenueMetrics =
+    BUILD_EXTRA && revenueAvailable(dashboardState, site)
+
+  const goalFilter = getGoalFilter(dashboardState)
+  const specialGoal = goalFilter ? getSpecialGoal(goalFilter) : null
 
   const reportInfo = {
-    title: specialTitleWhenGoalFilter(query, 'Custom Property Breakdown'),
+    title: specialGoal ? specialGoal.title : 'Custom property breakdown',
     dimension: propKey,
     endpoint: url.apiPath(
       site,
@@ -42,8 +50,8 @@ function PropsModal() {
   )
 
   const addSearchFilter = useCallback(
-    (query, searchString) => {
-      return addFilter(query, [
+    (dashboardState, searchString) => {
+      return addFilter(dashboardState, [
         'contains',
         `${EVENT_PROPS_PREFIX}${propKey}`,
         [searchString],
@@ -55,10 +63,10 @@ function PropsModal() {
 
   function chooseMetrics() {
     return [
-      metrics.createVisitors({ renderLabel: (_query) => 'Visitors' }),
-      metrics.createEvents({ renderLabel: (_query) => 'Events' }),
-      hasConversionGoalFilter(query) && metrics.createConversionRate(),
-      !hasConversionGoalFilter(query) && metrics.createPercentage(),
+      metrics.createVisitors({ renderLabel: (_dashboardState) => 'Visitors' }),
+      metrics.createEvents({ renderLabel: (_dashboardState) => 'Events' }),
+      hasConversionGoalFilter(dashboardState) && metrics.createConversionRate(),
+      !hasConversionGoalFilter(dashboardState) && metrics.createPercentage(),
       showRevenueMetrics && metrics.createAverageRevenue(),
       showRevenueMetrics && metrics.createTotalRevenue()
     ].filter((metric) => !!metric)
@@ -71,6 +79,7 @@ function PropsModal() {
         metrics={chooseMetrics()}
         getFilterInfo={getFilterInfo}
         addSearchFilter={addSearchFilter}
+        showPercentageColumn
       />
     </Modal>
   )

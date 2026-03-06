@@ -1,4 +1,5 @@
 import React from 'react'
+import { XMarkIcon } from '@heroicons/react/20/solid'
 import { useParams } from 'react-router-dom'
 
 import Modal from './modal'
@@ -12,7 +13,7 @@ import {
   cleanLabels,
   getAvailableFilterModals
 } from '../../util/filters'
-import { useQueryContext } from '../../query-context'
+import { useDashboardStateContext } from '../../dashboard-state-context'
 import { useSiteContext } from '../../site-context'
 import { isModifierPressed, isTyping } from '../../keybinding'
 import FilterModalGroup from './filter-modal-group'
@@ -61,17 +62,18 @@ class FilterModal extends React.Component {
 
     const modalType = this.props.modalType
 
-    const query = this.props.query
+    const dashboardState = this.props.dashboardState
     const { filterState, otherFilters, hasRelevantFilters } = partitionFilters(
       modalType,
-      query.filters
+      dashboardState.filters
     )
 
     this.handleKeydown = this.handleKeydown.bind(this)
+    this.closeModal = this.closeModal.bind(this)
     this.state = {
-      query,
+      dashboardState,
       filterState,
-      labelState: query.labels,
+      labelState: dashboardState.labels,
       otherFilters,
       hasRelevantFilters
     }
@@ -108,11 +110,18 @@ class FilterModal extends React.Component {
     )
   }
 
+  closeModal() {
+    this.props.navigate({
+      path: rootRoute.path,
+      search: (search) => search
+    })
+  }
+
   selectFiltersAndCloseModal(filters) {
     this.props.navigate({
       path: rootRoute.path,
-      search: (search) => ({
-        ...search,
+      search: (searchRecord) => ({
+        ...searchRecord,
         filters: filters,
         labels: cleanLabels(filters, this.state.labelState)
       }),
@@ -130,7 +139,7 @@ class FilterModal extends React.Component {
         },
         labelState: cleanLabels(
           Object.values(this.state.filterState).concat(
-            this.state.query.filters
+            this.state.dashboardState.filters
           ),
           prevState.labelState,
           filterKey,
@@ -169,13 +178,23 @@ class FilterModal extends React.Component {
 
   render() {
     return (
-      <Modal maxWidth="460px">
-        <h1 className="text-xl font-bold dark:text-gray-100">
-          Filter by {formatFilterGroup(this.props.modalType)}
-        </h1>
+      <Modal maxWidth="460px" allowScroll={true} onClose={this.closeModal}>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-base md:text-lg font-bold dark:text-gray-100">
+            Filter by {formatFilterGroup(this.props.modalType)}
+          </h1>
+          <button
+            type="button"
+            onClick={this.closeModal}
+            aria-label="Close modal"
+            className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
+          >
+            <XMarkIcon className="size-5" />
+          </button>
+        </div>
 
-        <div className="mt-4 border-b border-gray-300 dark:border-gray-700"></div>
-        <main className="modal__content">
+        <div className="mt-2 md:mt-4 border-b border-gray-300 dark:border-gray-700"></div>
+        <main>
           <form
             className="flex flex-col"
             onSubmit={this.handleSubmit.bind(this)}
@@ -192,7 +211,7 @@ class FilterModal extends React.Component {
               />
             ))}
 
-            <div className="mt-6 flex gap-x-4 items-center justify-start">
+            <div className="mt-6 mb-3 flex gap-x-4 items-center justify-start">
               <button
                 type="submit"
                 className="button !px-3"
@@ -225,14 +244,14 @@ class FilterModal extends React.Component {
 export default function FilterModalWithRouter(props) {
   const navigate = useAppNavigate()
   const { field } = useParams()
-  const { query } = useQueryContext()
+  const { dashboardState } = useDashboardStateContext()
   const site = useSiteContext()
   if (!Object.keys(getAvailableFilterModals(site)).includes(field)) {
     return null
   }
   const appliedSegmentFilter =
     field === 'segment'
-      ? findAppliedSegmentFilter({ filters: query.filters })
+      ? findAppliedSegmentFilter({ filters: dashboardState.filters })
       : null
   if (appliedSegmentFilter) {
     const [_operation, _dimension, [segmentId]] = appliedSegmentFilter
@@ -242,7 +261,7 @@ export default function FilterModalWithRouter(props) {
     <FilterModal
       {...props}
       modalType={field || 'page'}
-      query={query}
+      dashboardState={dashboardState}
       navigate={navigate}
       site={site}
     />

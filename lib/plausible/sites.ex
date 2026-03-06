@@ -161,9 +161,6 @@ defmodule Plausible.Sites do
 
   defdelegate list(user, pagination_params, opts \\ []), to: Plausible.Teams.Sites
 
-  defdelegate list_with_invitations(user, pagination_params, opts \\ []),
-    to: Plausible.Teams.Sites
-
   def list_people(site) do
     owner_memberships =
       from(
@@ -232,6 +229,7 @@ defmodule Plausible.Sites do
         where: gm.site_id == ^site.id,
         select: %{
           id: gm.id,
+          sort_index: -gm.id,
           inserted_at: gm.inserted_at,
           email: u.email,
           role: gm.role,
@@ -254,6 +252,7 @@ defmodule Plausible.Sites do
         where: gi.site_id == ^site.id,
         select: %{
           id: gi.id,
+          sort_index: gi.id,
           inserted_at: gi.inserted_at,
           email: ti.email,
           role: gi.role,
@@ -273,12 +272,13 @@ defmodule Plausible.Sites do
     from(g in subquery(guests),
       select: %{
         id: g.id,
+        sort_index: g.sort_index,
         inserted_at: g.inserted_at,
         email: g.email,
         role: g.role,
         status: g.status
       },
-      order_by: [desc: g.inserted_at, desc: g.id]
+      order_by: [asc: g.sort_index]
     )
   end
 
@@ -440,6 +440,8 @@ defmodule Plausible.Sites do
 
   def create_shared_link(site, name, opts \\ []) do
     password = Keyword.get(opts, :password)
+    segment_id = Keyword.get(opts, :segment_id)
+
     site = Plausible.Repo.preload(site, :team)
     skip_feature_check? = Keyword.get(opts, :skip_feature_check?, false)
 
@@ -448,7 +450,7 @@ defmodule Plausible.Sites do
     else
       %SharedLink{site_id: site.id, slug: Nanoid.generate()}
       |> SharedLink.changeset(
-        %{name: name, password: password},
+        %{name: name, password: password, segment_id: segment_id},
         Keyword.take(opts, [:skip_special_name_check?])
       )
       |> Repo.insert()

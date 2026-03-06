@@ -6,6 +6,48 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Add `bounce_rate` to page-filtered Top Stats even when imports are included, but render a metric warning about imported data not included in `bounce_rate` tooltip.
+- Add `time_on_page` to page-filtered Top Stats even when imports are included, unless legacy time on page is in view. 
+- Adds team_id to query debug metadata (saved in system.query_log log_comment column)
+- Add "Unknown" option to Countries shield, for when the country code is unrecognized
+- Add "Last 24 Hours" to dashboard time range picker and Stats API v2
+
+### Removed
+
+### Changed
+
+- Keybind hints are hidden on smaller screens
+
+### Fixed
+
+- Fixed issue with all non-interactive events being counted as interactive
+- Fixed countries map countries staying highlighted on Chrome
+
+## v3.2.0 - 2026-01-16
+
+### Added
+
+- A visitor percentage breakdown is now shown on all reports, both on the dashboard and in the detailed breakdown
+- Shared links can now be limited to a particular segment of the data
+
+### Removed
+
+### Changed
+
+- Segment filters are visible to anyone who can view the dashboard with that segment applied, including personal segments on public dashboards
+- When accessing a link to a shared password-protected dashboard subpage (e.g. `.../pages`), the viewer will be redirected to that subpage after providing the password
+
+### Fixed
+
+- To make internal stats API requests for password-protected shared links, shared link auth cookie must be set in the requests
+- Fixed issue with site guests in Editor role and team members in Editor role not being able to change the domain of site
+- Fixed direct dashboard links that use legacy dashboard filters containing URL encoded special characters (e.g. character `ê` in the legacy filter `?page=%C3%AA`)
+- Fix bug with tracker script config cache that made requests for certain cached scripts give error 500
+
+## v3.1.0 - 2025-11-13
+
+### Added
+
 - Custom events can now be marked as non-interactive in events API and tracker script: events marked as non-interactive are not counted towards bounce rate
 - Ability to leave team via Team Settings > Leave Team
 - Stats APIv2 now supports `include.trim_relative_date_range` - this option allows trimming empty values after current time for `day`, `month` and `year` date_range values

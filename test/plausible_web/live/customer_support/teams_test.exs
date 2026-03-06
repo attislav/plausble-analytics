@@ -1,12 +1,9 @@
 defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
   use PlausibleWeb.ConnCase, async: false
-  use Plausible.Teams.Test
-  use Plausible
   @moduletag :ee_only
 
   on_ee do
     import Phoenix.LiveViewTest
-    import Plausible.Test.Support.HTML
 
     alias Plausible.Auth.SSO
 
@@ -16,13 +13,13 @@ defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
       Routes.customer_support_team_path(PlausibleWeb.Endpoint, :show, id, qs)
     end
 
+    setup [:create_user, :log_in, :create_site]
+
+    setup %{user: user} do
+      patch_env(:super_admin_user_ids, [user.id])
+    end
+
     describe "overview" do
-      setup [:create_user, :log_in, :create_site]
-
-      setup %{user: user} do
-        patch_env(:super_admin_user_ids, [user.id])
-      end
-
       test "renders", %{conn: conn, user: user} do
         team = team_of(user)
         new_site(owner: user)
@@ -165,11 +162,9 @@ defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
     end
 
     describe "sites" do
-      setup [:create_user, :log_in, :create_site]
-
-      setup %{user: user} do
-        patch_env(:super_admin_user_ids, [user.id])
-      end
+      @arrow_down "↓"
+      @arrow_up "↑"
+      @arrow_up_down "↕"
 
       test "lists sites belonging to a team", %{conn: conn, user: user} do
         team = team_of(user)
@@ -191,6 +186,156 @@ defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
         refute text =~ "condolidated.example.com"
         refute text =~ "other.example.com"
       end
+
+      test "paginates sites", %{conn: conn, user: user} do
+        team = team_of(user)
+
+        for i <- 1..24 do
+          new_site(owner: user, domain: "site-#{String.pad_leading("#{i}", 2, "0")}.example.com")
+        end
+
+        {:ok, lv, _html} = live(conn, open_team(team.id, tab: "sites"))
+        html = render(lv)
+
+        assert element_exists?(html, ~s|nav[aria-label="Pagination"]|)
+        assert text(html) =~ "Total of 25 sites"
+        assert text(html) =~ "Page 1 of 2"
+
+        lv |> render_patch(open_team(team.id, tab: "sites", page: 2))
+        html = render(lv)
+
+        assert text(html) =~ "Page 2 of 2"
+
+        lv |> render_patch(open_team(team.id, tab: "sites", page: 1))
+        html = render(lv)
+
+        assert text(html) =~ "Page 1 of 2"
+      end
+
+      test "persists sort order across paginated entries", %{conn: conn, user: user} do
+        team = team_of(user)
+
+        for i <- 1..24 do
+          new_site(owner: user, domain: "site-#{String.pad_leading("#{i}", 2, "0")}.example.com")
+        end
+
+        {:ok, lv, _html} = live(conn, open_team(team.id, tab: "sites"))
+
+        # sort alphabetically ascending
+        lv |> element(~s|th[phx-value-by="alnum"]|) |> render_click()
+
+        html = render(lv)
+        page1_domains = extract_domains(html)
+        assert page1_domains == Enum.sort(page1_domains)
+
+        lv |> render_patch(open_team(team.id, tab: "sites", page: 2))
+        html = render(lv)
+        page2_domains = extract_domains(html)
+
+        # should still be alphabetically ascending on page 2
+        assert page2_domains == Enum.sort(page2_domains)
+        assert Enum.max(page1_domains) < Enum.min(page2_domains)
+      end
+
+      test "shows no pagination when sites fit on one page", %{conn: conn, user: user} do
+        team = team_of(user)
+        new_site(owner: user, domain: "only-site.example.com")
+
+        {:ok, lv, _html} = live(conn, open_team(team.id, tab: "sites"))
+        html = render(lv)
+
+        refute element_exists?(html, ~s|nav[aria-label="Pagination"]|)
+        assert text(html) =~ "only-site.example.com"
+      end
+
+      test "sorts by domain ascending when Domain header is clicked", %{conn: conn, user: user} do
+        team = team_of(user)
+        new_site(owner: user, domain: "zebra.example.com")
+        new_site(owner: user, domain: "apple.example.com")
+        new_site(owner: user, domain: "mango.example.com")
+
+        {:ok, lv, _html} = live(conn, open_team(team.id, tab: "sites"))
+
+        lv
+        |> element(~s|th[phx-value-by="alnum"]|)
+        |> render_click()
+
+        html = render(lv)
+        domains = extract_domains(html)
+
+        assert domains == Enum.sort(domains)
+      end
+
+      test "flips to descending when Domain header is clicked twice", %{conn: conn, user: user} do
+        team = team_of(user)
+        new_site(owner: user, domain: "zebra.example.com")
+        new_site(owner: user, domain: "apple.example.com")
+        new_site(owner: user, domain: "mango.example.com")
+
+        {:ok, lv, _html} = live(conn, open_team(team.id, tab: "sites"))
+
+        lv |> element(~s|th[phx-value-by="alnum"]|) |> render_click()
+        lv |> element(~s|th[phx-value-by="alnum"]|) |> render_click()
+
+        html = render(lv)
+        domains = extract_domains(html)
+
+        assert domains == Enum.sort(domains, :desc)
+      end
+
+      test "flips direction when Traffic header is clicked twice", %{conn: conn, user: user} do
+        team = team_of(user)
+        new_site(owner: user, domain: "zebra.example.com")
+        new_site(owner: user, domain: "apple.example.com")
+
+        {:ok, lv, _html} = live(conn, open_team(team.id, tab: "sites"))
+
+        # default is traffic desc, click to flip
+        html_after_first = lv |> element(~s|th[phx-value-by="traffic"]|) |> render_click()
+        html_after_second = lv |> element(~s|th[phx-value-by="traffic"]|) |> render_click()
+
+        assert text(html_after_first) =~ @arrow_up
+        assert text(html_after_second) =~ @arrow_down
+      end
+
+      test "switches from traffic sort to domain sort", %{conn: conn, user: user} do
+        team = team_of(user)
+        new_site(owner: user, domain: "zebra.example.com")
+        new_site(owner: user, domain: "apple.example.com")
+
+        {:ok, lv, _html} = live(conn, open_team(team.id, tab: "sites"))
+
+        # default active column is traffic down
+        assert text(render(lv)) =~ @arrow_down
+
+        lv |> element(~s|th[phx-value-by="alnum"]|) |> render_click()
+
+        html = render(lv)
+        domains = extract_domains(html)
+
+        # now sorted alphabetically
+        assert domains == Enum.sort(domains)
+      end
+
+      test "shows sort arrow only on active column", %{conn: conn, user: user} do
+        team = team_of(user)
+        new_site(owner: user, domain: "apple.example.com")
+
+        {:ok, lv, _html} = live(conn, open_team(team.id, tab: "sites"))
+
+        html = render(lv)
+        traffic_th = text_of_element(html, ~s|th[phx-value-by="traffic"]|)
+        domain_th = text_of_element(html, ~s|th[phx-value-by="alnum"]|)
+
+        # traffic is the default active sort, has a directional arrow
+        assert traffic_th =~ @arrow_down
+        refute traffic_th =~ @arrow_up_down
+
+        # domain sort is inactive
+        assert domain_th =~ @arrow_up_down
+        refute domain_th =~ @arrow_up
+        refute domain_th =~ @arrow_down
+      end
     end
 
     @create_consolidated_view_button ~s|button[phx-click="create-consolidated-view"]|
@@ -198,13 +343,7 @@ defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
     @consolidated_views_tab_content ~s|div[data-test-id="consolidated-views-tab-content"]|
 
     describe "consolidated views" do
-      setup [:create_user, :log_in, :create_site]
-
-      setup %{user: user} do
-        patch_env(:super_admin_user_ids, [user.id])
-      end
-
-      test "renders button to create one inonef  exist yet", %{conn: conn, user: user} do
+      test "renders button to create one if none exist yet", %{conn: conn, user: user} do
         team = team_of(user)
 
         {:ok, lv, _html} = live(conn, open_team(team.id, tab: "consolidated_views"))
@@ -217,16 +356,19 @@ defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
       end
 
       test "can create a consolidated view for team", %{conn: conn, user: user} do
+        new_site(owner: user)
+        new_site(owner: user)
         team = user |> team_of() |> Plausible.Teams.complete_setup()
 
         {:ok, lv, _html} = live(conn, open_team(team.id, tab: "consolidated_views"))
 
         lv |> element(@create_consolidated_view_button) |> render_click()
 
-        assert Plausible.ConsolidatedView.enabled?(team)
+        assert Plausible.ConsolidatedView.get(team)
       end
 
       test "renders existing consolidated view", %{conn: conn, user: user} do
+        new_site(owner: user)
         team = team_of(user)
         new_consolidated_view(team)
 
@@ -242,24 +384,21 @@ defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
       end
 
       test "can delete consolidated view", %{conn: conn, user: user} do
+        new_site(owner: user)
         team = team_of(user)
         new_consolidated_view(team)
+
+        assert Plausible.ConsolidatedView.get(team)
 
         {:ok, lv, _html} = live(conn, open_team(team.id, tab: "consolidated_views"))
 
         lv |> element(@delete_consolidated_view_button) |> render_click()
 
-        assert not Plausible.ConsolidatedView.enabled?(team)
+        refute Plausible.ConsolidatedView.get(team)
       end
     end
 
     describe "billing" do
-      setup [:create_user, :log_in, :create_site]
-
-      setup %{user: user} do
-        patch_env(:super_admin_user_ids, [user.id])
-      end
-
       test "renders custom plan form", %{conn: conn, user: user} do
         lv = open_custom_plan(conn, team_of(user))
         html = render(lv)
@@ -327,7 +466,8 @@ defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
               "site_segments" => "false",
               "shared_links" => "true",
               "sites_api" => "true",
-              "sso" => "false"
+              "sso" => "false",
+              "consolidated_view" => "true"
             }
           }
         })
@@ -342,6 +482,7 @@ defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
                  %Plausible.Billing.EnterprisePlan{
                    billing_interval: :yearly,
                    features: [
+                     Plausible.Billing.Feature.ConsolidatedView,
                      Plausible.Billing.Feature.SharedLinks,
                      Plausible.Billing.Feature.SitesAPI
                    ],
@@ -745,12 +886,6 @@ defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
     end
 
     describe "sso" do
-      setup [:create_user, :log_in, :create_site]
-
-      setup %{user: user} do
-        patch_env(:super_admin_user_ids, [user.id])
-      end
-
       test "sso tab normally won't render", %{conn: conn, user: user} do
         team = team_of(user)
         {:ok, _lv, html} = live(conn, open_team(team.id))
@@ -840,12 +975,6 @@ defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
     end
 
     describe "audit" do
-      setup [:create_user, :log_in, :create_site]
-
-      setup %{user: user} do
-        patch_env(:super_admin_user_ids, [user.id])
-      end
-
       test "audit tab is present", %{conn: conn, user: user} do
         team = team_of(user)
         {:ok, _lv, html} = live(conn, open_team(team.id))
@@ -936,6 +1065,18 @@ defmodule PlausibleWeb.Live.CustomerSupport.TeamsTest do
         for i <- 4..8, do: refute(text =~ "Entry (#{i})")
         for i <- 1..3, do: assert(text =~ "Entry (#{i})")
       end
+    end
+
+    defp extract_domains(html) do
+      domains =
+        html
+        |> find("tbody tr td:first-child a")
+        |> Enum.map(&text/1)
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+
+      assert [_ | _] = domains
+      domains
     end
   end
 end

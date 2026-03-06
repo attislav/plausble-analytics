@@ -4,8 +4,6 @@ defmodule PlausibleWeb.SSOControllerSyncTest do
   @moduletag :ee_only
 
   on_ee do
-    use Plausible.Teams.Test
-
     alias Plausible.Auth
     alias Plausible.Auth.SSO
     alias Plausible.Repo
@@ -194,7 +192,7 @@ defmodule PlausibleWeb.SSOControllerSyncTest do
         conn =
           conn
           |> recycle()
-          |> Map.put(:secret_key_base, secret_key_base())
+          |> prepare_conn()
 
         {:ok,
          team: team,
@@ -474,12 +472,6 @@ defmodule PlausibleWeb.SSOControllerSyncTest do
                  }
                )
       end
-    end
-
-    defp secret_key_base() do
-      :plausible
-      |> Application.fetch_env!(PlausibleWeb.Endpoint)
-      |> Keyword.fetch!(:secret_key_base)
     end
   end
 end

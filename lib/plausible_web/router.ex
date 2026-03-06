@@ -104,8 +104,9 @@ defmodule PlausibleWeb.Router do
     end
   end
 
-  if Mix.env() in [:dev, :ce_dev] do
+  if Mix.env() in [:dev, :ce_dev, :e2e_test] do
     forward "/sent-emails", Bamboo.SentEmailViewerPlug
+    forward "/sent-emails-api", Bamboo.SentEmailApiPlug
   end
 
   scope "/" do
@@ -137,7 +138,7 @@ defmodule PlausibleWeb.Router do
   end
 
   on_ee do
-    if Mix.env() in [:dev, :test] do
+    if Mix.env() in [:dev, :test, :e2e_test] do
       scope "/dev", PlausibleWeb do
         pipe_through :browser
 
@@ -153,7 +154,7 @@ defmodule PlausibleWeb.Router do
   end
 
   # Routes for plug integration testing
-  if Mix.env() in [:test, :ce_test] do
+  if Mix.env() in [:test, :ce_test, :e2e_test] do
     scope "/plug-tests", PlausibleWeb do
       scope [] do
         pipe_through :browser
@@ -169,6 +170,15 @@ defmodule PlausibleWeb.Router do
         get("/api-basic", TestController, :api_basic)
         get("/:domain/api-with-domain", TestController, :api_basic)
       end
+    end
+  end
+
+  # Routes for E2E testing
+  if Mix.env() in [:test, :ce_test, :e2e_test] do
+    scope "/e2e-tests", PlausibleWeb do
+      pipe_through :api
+
+      post "/stats", E2EController, :populate_stats
     end
   end
 
@@ -269,6 +279,7 @@ defmodule PlausibleWeb.Router do
       end
 
       scope private: %{allow_consolidated_views: true} do
+        post "/:domain/query", StatsController, :query
         get "/:domain/current-visitors", StatsController, :current_visitors
         get "/:domain/main-graph", StatsController, :main_graph
         get "/:domain/top-stats", StatsController, :top_stats
@@ -306,6 +317,7 @@ defmodule PlausibleWeb.Router do
       post "/", SegmentsController, :create
       patch "/:segment_id", SegmentsController, :update
       delete "/:segment_id", SegmentsController, :delete
+      get "/:segment_id/shared-links", SegmentsController, :get_related_shared_links
     end
   end
 
@@ -325,24 +337,17 @@ defmodule PlausibleWeb.Router do
     },
     assigns: %{
       api_scope: "stats:read:*",
-      api_context: :site,
-      schema_type: :public
+      api_context: :site
     } do
     pipe_through [:public_api, PlausibleWeb.Plugs.AuthorizePublicAPI]
 
     post "/query", ExternalQueryApiController, :query
-
-    if Mix.env() in [:test, :ce_test] do
-      scope assigns: %{schema_type: :internal} do
-        post "/query-internal-test", ExternalQueryApiController, :query
-      end
-    end
   end
 
   scope "/api/docs", PlausibleWeb.Api do
     get "/query/schema.json", ExternalQueryApiController, :schema
 
-    scope assigns: %{schema_type: :public} do
+    scope [] do
       pipe_through :docs_stats_api
 
       post "/query", ExternalQueryApiController, :query
@@ -468,7 +473,7 @@ defmodule PlausibleWeb.Router do
   scope "/", PlausibleWeb do
     pipe_through [:shared_link]
 
-    get "/share/:domain", StatsController, :shared_link
+    get "/share/:domain/*path", StatsController, :shared_link
     post "/share/:slug/authenticate", StatsController, :authenticate_shared_link
   end
 
@@ -489,7 +494,7 @@ defmodule PlausibleWeb.Router do
     post "/security/password", SettingsController, :update_password
 
     get "/billing/subscription", SettingsController, :subscription
-    get "/billing/invoices", SettingsController, :invoices
+    get "/billing/invoices", SettingsController, :redirect_invoices
     get "/api-keys", SettingsController, :api_keys
 
     get "/api-keys/new", SettingsController, :new_api_key
@@ -702,10 +707,6 @@ defmodule PlausibleWeb.Router do
       get "/:domain/settings/goals", SiteController, :settings_goals
       get "/:domain/settings/properties", SiteController, :settings_props
       get "/:domain/settings/email-reports", SiteController, :settings_email_reports
-
-      put "/:domain/settings/features/visibility/:setting",
-          SiteController,
-          :update_feature_visibility
 
       put "/:domain/settings", SiteController, :update_settings
 

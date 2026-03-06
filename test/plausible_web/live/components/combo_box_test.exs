@@ -1,7 +1,6 @@
 defmodule PlausibleWeb.Live.Components.ComboBoxTest do
   use PlausibleWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
-  import Plausible.Test.Support.HTML
 
   alias PlausibleWeb.Live.Components.ComboBox
 
@@ -373,8 +372,8 @@ defmodule PlausibleWeb.Live.Components.ComboBoxTest do
                    true
                  }
                end,
-               200,
-               20
+               50,
+               50
              )
     end
 
@@ -394,8 +393,8 @@ defmodule PlausibleWeb.Live.Components.ComboBoxTest do
                    true
                  }
                end,
-               200,
-               20
+               50,
+               50
              )
     end
   end

@@ -1,6 +1,5 @@
 defmodule PlausibleWeb.Api.StatsController.SourcesTest do
   use PlausibleWeb.ConnCase
-  use Plausible.Teams.Test
 
   @user_id Enum.random(1000..9999)
 
@@ -35,9 +34,9 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
       conn = get(conn, "/api/stats/#{site.domain}/sources?period=day")
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "Google", "visitors" => 3},
-               %{"name" => "DuckDuckGo", "visitors" => 2},
-               %{"name" => "Direct / None", "visitors" => 1}
+               %{"name" => "Google", "visitors" => 3, "percentage" => 50.0},
+               %{"name" => "DuckDuckGo", "visitors" => 2, "percentage" => 33.33},
+               %{"name" => "Direct / None", "visitors" => 1, "percentage" => 16.67}
              ]
     end
 
@@ -85,8 +84,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
         )
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "Google", "visitors" => 2},
-               %{"name" => "DuckDuckGo", "visitors" => 1}
+               %{"name" => "Google", "visitors" => 2, "percentage" => 66.67},
+               %{"name" => "DuckDuckGo", "visitors" => 1, "percentage" => 33.33}
              ]
 
       assert json_response(conn, 200)["meta"] == %{
@@ -143,8 +142,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
         )
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "Google", "visitors" => 2},
-               %{"name" => "DuckDuckGo", "visitors" => 1}
+               %{"name" => "Google", "visitors" => 2, "percentage" => 66.67},
+               %{"name" => "DuckDuckGo", "visitors" => 1, "percentage" => 33.33}
              ]
     end
 
@@ -193,8 +192,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
         )
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "Facebook", "visitors" => 2},
-               %{"name" => "DuckDuckGo", "visitors" => 1}
+               %{"name" => "Facebook", "visitors" => 2, "percentage" => 66.67},
+               %{"name" => "DuckDuckGo", "visitors" => 1, "percentage" => 33.33}
              ]
     end
 
@@ -247,8 +246,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
         )
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "Google", "visitors" => 2},
-               %{"name" => "DuckDuckGo", "visitors" => 1}
+               %{"name" => "Google", "visitors" => 2, "percentage" => 66.67},
+               %{"name" => "DuckDuckGo", "visitors" => 1, "percentage" => 33.33}
              ]
     end
 
@@ -263,6 +262,9 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
       ])
 
       populate_stats(site, [
+        build(:imported_visitors),
+        build(:imported_visitors),
+        build(:imported_visitors),
         build(:imported_sources,
           source: "Google",
           visitors: 2
@@ -276,15 +278,15 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
       conn1 = get(conn, "/api/stats/#{site.domain}/sources?period=day")
 
       assert json_response(conn1, 200)["results"] == [
-               %{"name" => "Google", "visitors" => 2},
-               %{"name" => "DuckDuckGo", "visitors" => 1}
+               %{"name" => "Google", "visitors" => 2, "percentage" => 66.67},
+               %{"name" => "DuckDuckGo", "visitors" => 1, "percentage" => 33.33}
              ]
 
       conn2 = get(conn, "/api/stats/#{site.domain}/sources?period=day&with_imported=true")
 
       assert json_response(conn2, 200)["results"] == [
-               %{"name" => "Google", "visitors" => 4},
-               %{"name" => "DuckDuckGo", "visitors" => 2}
+               %{"name" => "Google", "visitors" => 4, "percentage" => 66.67},
+               %{"name" => "DuckDuckGo", "visitors" => 2, "percentage" => 33.33}
              ]
     end
 
@@ -320,13 +322,15 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "DuckDuckGo",
                  "visitors" => 1,
                  "bounce_rate" => 100,
-                 "visit_duration" => 0
+                 "visit_duration" => 0,
+                 "percentage" => 50.0
                },
                %{
                  "name" => "Google",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 50.0
                }
              ]
     end
@@ -356,6 +360,9 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
       ])
 
       populate_stats(site, [
+        build(:imported_visitors, date: ~D[2021-01-01]),
+        build(:imported_visitors, date: ~D[2021-01-01]),
+        build(:imported_visitors, date: ~D[2021-01-01]),
         build(:imported_sources,
           source: "Google",
           date: ~D[2021-01-01],
@@ -385,13 +392,15 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "DuckDuckGo",
                  "visitors" => 1,
                  "bounce_rate" => 100,
-                 "visit_duration" => 0
+                 "visit_duration" => 0,
+                 "percentage" => 50.0
                },
                %{
                  "name" => "Google",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 50.0
                }
              ]
 
@@ -405,14 +414,16 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                %{
                  "name" => "Google",
                  "visitors" => 3,
-                 "bounce_rate" => 25,
-                 "visit_duration" => 450.0
+                 "bounce_rate" => 25.0,
+                 "visit_duration" => 450.0,
+                 "percentage" => 60.0
                },
                %{
                  "name" => "DuckDuckGo",
                  "visitors" => 2,
-                 "bounce_rate" => 50,
-                 "visit_duration" => 50
+                 "bounce_rate" => 50.0,
+                 "visit_duration" => 50.0,
+                 "percentage" => 40.0
                }
              ]
     end
@@ -439,8 +450,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
       conn = get(conn, "/api/stats/#{site.domain}/sources?period=realtime")
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "Google", "visitors" => 2},
-               %{"name" => "DuckDuckGo", "visitors" => 1}
+               %{"name" => "Google", "visitors" => 2, "percentage" => 66.67},
+               %{"name" => "DuckDuckGo", "visitors" => 1, "percentage" => 33.33}
              ]
     end
 
@@ -469,7 +480,7 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
       conn1 = get(conn, "/api/stats/#{site.domain}/sources?period=day&limit=1&page=2")
 
       assert json_response(conn1, 200)["results"] == [
-               %{"name" => "DuckDuckGo", "visitors" => 1}
+               %{"name" => "DuckDuckGo", "visitors" => 1, "percentage" => 33.33}
              ]
 
       conn2 =
@@ -479,7 +490,7 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
         )
 
       assert json_response(conn2, 200)["results"] == [
-               %{"name" => "Google", "visitors" => 2}
+               %{"name" => "Google", "visitors" => 2, "percentage" => 66.67}
              ]
     end
 
@@ -503,8 +514,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
       conn = get(conn, "/api/stats/#{site.domain}/sources?period=day&filters=#{filters}")
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "Google", "visitors" => 2},
-               %{"name" => "DuckDuckGo", "visitors" => 1}
+               %{"name" => "Google", "visitors" => 2, "percentage" => 66.67},
+               %{"name" => "DuckDuckGo", "visitors" => 1, "percentage" => 33.33}
              ]
     end
 
@@ -528,8 +539,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
       conn = get(conn, "/api/stats/#{site.domain}/sources?period=day&filters=#{filters}")
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "Google", "visitors" => 2},
-               %{"name" => "DuckDuckGo", "visitors" => 1}
+               %{"name" => "Google", "visitors" => 2, "percentage" => 66.67},
+               %{"name" => "DuckDuckGo", "visitors" => 1, "percentage" => 33.33}
              ]
     end
 
@@ -544,9 +555,9 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
       conn = get(conn, "/api/stats/#{site.domain}/sources?order_by=#{order_by}&period=day")
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "C", "visitors" => 1},
-               %{"name" => "B", "visitors" => 1},
-               %{"name" => "A", "visitors" => 1}
+               %{"name" => "C", "visitors" => 1, "percentage" => 33.33},
+               %{"name" => "B", "visitors" => 1, "percentage" => 33.33},
+               %{"name" => "A", "visitors" => 1, "percentage" => 33.33}
              ]
     end
 
@@ -594,10 +605,34 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
         )
 
       assert json_response(conn1, 200)["results"] == [
-               %{"name" => "Z", "visitors" => 1, "bounce_rate" => 100, "visit_duration" => 0},
-               %{"name" => "A", "visitors" => 2, "bounce_rate" => 100, "visit_duration" => 0},
-               %{"name" => "C", "visitors" => 1, "bounce_rate" => 0, "visit_duration" => 30},
-               %{"name" => "B", "visitors" => 1, "bounce_rate" => 0, "visit_duration" => 45}
+               %{
+                 "name" => "Z",
+                 "visitors" => 1,
+                 "bounce_rate" => 100,
+                 "visit_duration" => 0,
+                 "percentage" => 25.0
+               },
+               %{
+                 "name" => "A",
+                 "visitors" => 2,
+                 "bounce_rate" => 100,
+                 "visit_duration" => 0,
+                 "percentage" => 50.0
+               },
+               %{
+                 "name" => "C",
+                 "visitors" => 1,
+                 "bounce_rate" => 0,
+                 "visit_duration" => 30,
+                 "percentage" => 25.0
+               },
+               %{
+                 "name" => "B",
+                 "visitors" => 1,
+                 "bounce_rate" => 0,
+                 "visit_duration" => 45,
+                 "percentage" => 25.0
+               }
              ]
 
       order_by_flipped = Jason.encode!([["visit_duration", "desc"], ["visit:source", "asc"]])
@@ -609,10 +644,34 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
         )
 
       assert json_response(conn2, 200)["results"] == [
-               %{"name" => "B", "visitors" => 1, "bounce_rate" => 0, "visit_duration" => 45},
-               %{"name" => "C", "visitors" => 1, "bounce_rate" => 0, "visit_duration" => 30},
-               %{"name" => "A", "visitors" => 2, "bounce_rate" => 100, "visit_duration" => 0},
-               %{"name" => "Z", "visitors" => 1, "bounce_rate" => 100, "visit_duration" => 0}
+               %{
+                 "name" => "B",
+                 "visitors" => 1,
+                 "bounce_rate" => 0,
+                 "visit_duration" => 45,
+                 "percentage" => 25.0
+               },
+               %{
+                 "name" => "C",
+                 "visitors" => 1,
+                 "bounce_rate" => 0,
+                 "visit_duration" => 30,
+                 "percentage" => 25.0
+               },
+               %{
+                 "name" => "A",
+                 "visitors" => 2,
+                 "bounce_rate" => 100,
+                 "visit_duration" => 0,
+                 "percentage" => 50.0
+               },
+               %{
+                 "name" => "Z",
+                 "visitors" => 1,
+                 "bounce_rate" => 100,
+                 "visit_duration" => 0,
+                 "percentage" => 25.0
+               }
              ]
     end
 
@@ -652,11 +711,18 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "visitors" => 2,
                  "bounce_rate" => 100,
                  "visit_duration" => 0,
+                 "percentage" => 66.67,
                  "comparison" => %{
                    "visitors" => 0,
                    "bounce_rate" => 0,
                    "visit_duration" => nil,
-                   "change" => %{"visitors" => 100, "bounce_rate" => nil, "visit_duration" => nil}
+                   "percentage" => 0.0,
+                   "change" => %{
+                     "visitors" => 100,
+                     "bounce_rate" => nil,
+                     "visit_duration" => nil,
+                     "percentage" => 100
+                   }
                  }
                },
                %{
@@ -664,11 +730,18 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "visitors" => 1,
                  "bounce_rate" => 100,
                  "visit_duration" => 0,
+                 "percentage" => 33.33,
                  "comparison" => %{
                    "visitors" => 1,
                    "bounce_rate" => 100,
                    "visit_duration" => 0,
-                   "change" => %{"visitors" => 0, "bounce_rate" => 0, "visit_duration" => 0}
+                   "percentage" => 100.0,
+                   "change" => %{
+                     "visitors" => 0,
+                     "bounce_rate" => 0,
+                     "visit_duration" => 0,
+                     "percentage" => -67
+                   }
                  }
                }
              ]
@@ -677,6 +750,139 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                "date_range_label" => "2 Jan 2021",
                "comparison_date_range_label" => "1 Jan 2021"
              }
+    end
+
+    @tag :ee_only
+    test "return revenue metrics for sources breakdown", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview,
+          user_id: 1,
+          referrer_source: "Google",
+          referrer: "google.com"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 1,
+          revenue_reporting_amount: Decimal.new("1000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 2,
+          referrer_source: "Google",
+          referrer: "google.com"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 2,
+          revenue_reporting_amount: Decimal.new("2000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 3,
+          referrer_source: "Google",
+          referrer: "google.com"
+        ),
+        build(:pageview,
+          user_id: 4,
+          referrer_source: "DuckDuckGo",
+          referrer: "duckduckgo.com"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 4,
+          revenue_reporting_amount: Decimal.new("500"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 5,
+          referrer_source: "DuckDuckGo",
+          referrer: "duckduckgo.com"
+        ),
+        build(:pageview, user_id: 6),
+        build(:event,
+          name: "Payment",
+          user_id: 6,
+          revenue_reporting_amount: Decimal.new("600"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview, user_id: 7),
+        build(:event,
+          name: "Payment",
+          user_id: 7,
+          revenue_reporting_amount: nil
+        ),
+        build(:pageview,
+          user_id: 8,
+          referrer_source: "Bing",
+          referrer: "bing.com"
+        )
+      ])
+
+      insert(:goal, %{site: site, event_name: "Payment", currency: :USD})
+
+      filters = Jason.encode!([[:is, "event:goal", ["Payment"]]])
+      order_by = Jason.encode!([["visitors", "desc"]])
+
+      q = "?filters=#{filters}&order_by=#{order_by}&detailed=true&period=day&page=1&limit=100"
+
+      conn = get(conn, "/api/stats/#{site.domain}/sources#{q}")
+
+      assert json_response(conn, 200)["results"] == [
+               %{
+                 "name" => "Direct / None",
+                 "visitors" => 2,
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$600.00",
+                   "short" => "$600.0",
+                   "value" => 600.0
+                 },
+                 "conversion_rate" => 100.0,
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$600.00",
+                   "short" => "$600.0",
+                   "value" => 600.0
+                 },
+                 "total_visitors" => 2
+               },
+               %{
+                 "name" => "Google",
+                 "visitors" => 2,
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$1,500.00",
+                   "short" => "$1.5K",
+                   "value" => 1500.0
+                 },
+                 "conversion_rate" => 66.67,
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$3,000.00",
+                   "short" => "$3.0K",
+                   "value" => 3000.0
+                 },
+                 "total_visitors" => 3
+               },
+               %{
+                 "name" => "DuckDuckGo",
+                 "visitors" => 1,
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "conversion_rate" => 50.0,
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "total_visitors" => 2
+               }
+             ]
     end
   end
 
@@ -764,13 +970,143 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "Paid Social",
                  "visitors" => 2,
                  "bounce_rate" => 100,
-                 "visit_duration" => 0
+                 "visit_duration" => 0,
+                 "percentage" => 66.67
                },
                %{
                  "name" => "Organic Search",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 33.33
+               }
+             ]
+    end
+
+    @tag :ee_only
+    test "return revenue metrics for channels breakdown", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview,
+          user_id: 1,
+          referrer_source: "Google",
+          referrer: "google.com"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 1,
+          revenue_reporting_amount: Decimal.new("1000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 2,
+          referrer_source: "Google",
+          referrer: "google.com"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 2,
+          revenue_reporting_amount: Decimal.new("2000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 3,
+          referrer_source: "Google",
+          referrer: "google.com"
+        ),
+        build(:pageview,
+          user_id: 4,
+          referrer_source: "Facebook",
+          utm_source: "fb-ads"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 4,
+          revenue_reporting_amount: Decimal.new("500"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 5,
+          referrer_source: "Facebook",
+          utm_source: "fb-ads"
+        ),
+        build(:pageview, user_id: 6),
+        build(:event,
+          name: "Payment",
+          user_id: 6,
+          revenue_reporting_amount: Decimal.new("600"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview, user_id: 7),
+        build(:event,
+          name: "Payment",
+          user_id: 7,
+          revenue_reporting_amount: nil
+        )
+      ])
+
+      insert(:goal, %{site: site, event_name: "Payment", currency: :USD})
+
+      filters = Jason.encode!([[:is, "event:goal", ["Payment"]]])
+      order_by = Jason.encode!([["visitors", "desc"]])
+
+      q = "?filters=#{filters}&order_by=#{order_by}&detailed=true&period=day&page=1&limit=100"
+
+      conn = get(conn, "/api/stats/#{site.domain}/channels#{q}")
+
+      assert json_response(conn, 200)["results"] == [
+               %{
+                 "name" => "Direct",
+                 "visitors" => 2,
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$600.00",
+                   "short" => "$600.0",
+                   "value" => 600.0
+                 },
+                 "conversion_rate" => 100.0,
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$600.00",
+                   "short" => "$600.0",
+                   "value" => 600.0
+                 },
+                 "total_visitors" => 2
+               },
+               %{
+                 "name" => "Organic Search",
+                 "visitors" => 2,
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$1,500.00",
+                   "short" => "$1.5K",
+                   "value" => 1500.0
+                 },
+                 "conversion_rate" => 66.67,
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$3,000.00",
+                   "short" => "$3.0K",
+                   "value" => 3000.0
+                 },
+                 "total_visitors" => 3
+               },
+               %{
+                 "name" => "Paid Social",
+                 "visitors" => 1,
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "conversion_rate" => 50.0,
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "total_visitors" => 2
                }
              ]
     end
@@ -827,13 +1163,15 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "email",
                  "visitors" => 1,
                  "bounce_rate" => 100,
-                 "visit_duration" => 0
+                 "visit_duration" => 0,
+                 "percentage" => 50.0
                },
                %{
                  "name" => "social",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 50.0
                }
              ]
 
@@ -848,13 +1186,15 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "email",
                  "visitors" => 2,
                  "bounce_rate" => 50,
-                 "visit_duration" => 50
+                 "visit_duration" => 50,
+                 "percentage" => 50.0
                },
                %{
                  "name" => "social",
                  "visitors" => 2,
                  "bounce_rate" => 50,
-                 "visit_duration" => 800.0
+                 "visit_duration" => 800.0,
+                 "percentage" => 50.0
                }
              ]
     end
@@ -907,7 +1247,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "social",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 100.0
                }
              ]
 
@@ -921,8 +1262,114 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                %{
                  "name" => "social",
                  "visitors" => 2,
-                 "bounce_rate" => 50,
-                 "visit_duration" => 800.0
+                 "bounce_rate" => 50.0,
+                 "visit_duration" => 800.0,
+                 "percentage" => 100.0
+               }
+             ]
+    end
+
+    @tag :ee_only
+    test "return revenue metrics for UTM mediums breakdown", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview,
+          user_id: 1,
+          utm_medium: "social"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 1,
+          revenue_reporting_amount: Decimal.new("1000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 2,
+          utm_medium: "social"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 2,
+          revenue_reporting_amount: Decimal.new("2000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 3,
+          utm_medium: "social"
+        ),
+        build(:pageview,
+          user_id: 4,
+          utm_medium: "email"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 4,
+          revenue_reporting_amount: Decimal.new("500"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 5,
+          utm_medium: "email"
+        ),
+        build(:pageview, user_id: 6),
+        build(:event,
+          name: "Payment",
+          user_id: 6,
+          revenue_reporting_amount: Decimal.new("600"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview, user_id: 7),
+        build(:event,
+          name: "Payment",
+          user_id: 7,
+          revenue_reporting_amount: nil
+        )
+      ])
+
+      insert(:goal, %{site: site, event_name: "Payment", currency: :USD})
+
+      filters = Jason.encode!([[:is, "event:goal", ["Payment"]]])
+      order_by = Jason.encode!([["visitors", "desc"]])
+
+      q = "?filters=#{filters}&order_by=#{order_by}&detailed=true&period=day&page=1&limit=100"
+
+      conn = get(conn, "/api/stats/#{site.domain}/utm_mediums#{q}")
+
+      assert json_response(conn, 200)["results"] == [
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$1,500.00",
+                   "short" => "$1.5K",
+                   "value" => 1500.0
+                 },
+                 "conversion_rate" => 66.67,
+                 "name" => "social",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$3,000.00",
+                   "short" => "$3.0K",
+                   "value" => 3000.0
+                 },
+                 "total_visitors" => 3,
+                 "visitors" => 2
+               },
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "conversion_rate" => 50.0,
+                 "name" => "email",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "total_visitors" => 2,
+                 "visitors" => 1
                }
              ]
     end
@@ -983,13 +1430,15 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "august",
                  "visitors" => 2,
                  "bounce_rate" => 100,
-                 "visit_duration" => 0
+                 "visit_duration" => 0,
+                 "percentage" => 66.67
                },
                %{
                  "name" => "profile",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 33.33
                }
              ]
 
@@ -1004,13 +1453,15 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "august",
                  "visitors" => 3,
                  "bounce_rate" => 67,
-                 "visit_duration" => 300
+                 "visit_duration" => 300,
+                 "percentage" => 60.0
                },
                %{
                  "name" => "profile",
                  "visitors" => 2,
                  "bounce_rate" => 50,
-                 "visit_duration" => 800.0
+                 "visit_duration" => 800.0,
+                 "percentage" => 40.0
                }
              ]
     end
@@ -1067,7 +1518,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "profile",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 100.0
                }
              ]
 
@@ -1081,8 +1533,114 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                %{
                  "name" => "profile",
                  "visitors" => 2,
-                 "bounce_rate" => 50,
-                 "visit_duration" => 800.0
+                 "bounce_rate" => 50.0,
+                 "visit_duration" => 800.0,
+                 "percentage" => 100.0
+               }
+             ]
+    end
+
+    @tag :ee_only
+    test "return revenue metrics for UTM campaigns breakdown", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview,
+          user_id: 1,
+          utm_campaign: "profile"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 1,
+          revenue_reporting_amount: Decimal.new("1000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 2,
+          utm_campaign: "profile"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 2,
+          revenue_reporting_amount: Decimal.new("2000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 3,
+          utm_campaign: "profile"
+        ),
+        build(:pageview,
+          user_id: 4,
+          utm_campaign: "august"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 4,
+          revenue_reporting_amount: Decimal.new("500"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 5,
+          utm_campaign: "august"
+        ),
+        build(:pageview, user_id: 6),
+        build(:event,
+          name: "Payment",
+          user_id: 6,
+          revenue_reporting_amount: Decimal.new("600"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview, user_id: 7),
+        build(:event,
+          name: "Payment",
+          user_id: 7,
+          revenue_reporting_amount: nil
+        )
+      ])
+
+      insert(:goal, %{site: site, event_name: "Payment", currency: :USD})
+
+      filters = Jason.encode!([[:is, "event:goal", ["Payment"]]])
+      order_by = Jason.encode!([["visitors", "desc"]])
+
+      q = "?filters=#{filters}&order_by=#{order_by}&detailed=true&period=day&page=1&limit=100"
+
+      conn = get(conn, "/api/stats/#{site.domain}/utm_campaigns#{q}")
+
+      assert json_response(conn, 200)["results"] == [
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$1,500.00",
+                   "short" => "$1.5K",
+                   "value" => 1500.0
+                 },
+                 "conversion_rate" => 66.67,
+                 "name" => "profile",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$3,000.00",
+                   "short" => "$3.0K",
+                   "value" => 3000.0
+                 },
+                 "total_visitors" => 3,
+                 "visitors" => 2
+               },
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "conversion_rate" => 50.0,
+                 "name" => "august",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "total_visitors" => 2,
+                 "visitors" => 1
                }
              ]
     end
@@ -1124,13 +1682,120 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "newsletter",
                  "visitors" => 2,
                  "bounce_rate" => 100,
-                 "visit_duration" => 0
+                 "visit_duration" => 0,
+                 "percentage" => 66.67
                },
                %{
                  "name" => "Twitter",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 33.33
+               }
+             ]
+    end
+
+    @tag :ee_only
+    test "return revenue metrics for UTM sources breakdown", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview,
+          user_id: 1,
+          utm_source: "Twitter"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 1,
+          revenue_reporting_amount: Decimal.new("1000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 2,
+          utm_source: "Twitter"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 2,
+          revenue_reporting_amount: Decimal.new("2000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 3,
+          utm_source: "Twitter"
+        ),
+        build(:pageview,
+          user_id: 4,
+          utm_source: "newsletter"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 4,
+          revenue_reporting_amount: Decimal.new("500"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 5,
+          utm_source: "newsletter"
+        ),
+        build(:pageview, user_id: 6),
+        build(:event,
+          name: "Payment",
+          user_id: 6,
+          revenue_reporting_amount: Decimal.new("600"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview, user_id: 7),
+        build(:event,
+          name: "Payment",
+          user_id: 7,
+          revenue_reporting_amount: nil
+        )
+      ])
+
+      insert(:goal, %{site: site, event_name: "Payment", currency: :USD})
+
+      filters = Jason.encode!([[:is, "event:goal", ["Payment"]]])
+      order_by = Jason.encode!([["visitors", "desc"]])
+
+      q = "?filters=#{filters}&order_by=#{order_by}&detailed=true&period=day&page=1&limit=100"
+
+      conn = get(conn, "/api/stats/#{site.domain}/utm_sources#{q}")
+
+      assert json_response(conn, 200)["results"] == [
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$1,500.00",
+                   "short" => "$1.5K",
+                   "value" => 1500.0
+                 },
+                 "conversion_rate" => 66.67,
+                 "name" => "Twitter",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$3,000.00",
+                   "short" => "$3.0K",
+                   "value" => 3000.0
+                 },
+                 "total_visitors" => 3,
+                 "visitors" => 2
+               },
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "conversion_rate" => 50.0,
+                 "name" => "newsletter",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "total_visitors" => 2,
+                 "visitors" => 1
                }
              ]
     end
@@ -1191,13 +1856,15 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "Sweden",
                  "visitors" => 2,
                  "bounce_rate" => 100,
-                 "visit_duration" => 0
+                 "visit_duration" => 0,
+                 "percentage" => 66.67
                },
                %{
                  "name" => "oat milk",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 33.33
                }
              ]
 
@@ -1211,14 +1878,16 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                %{
                  "name" => "Sweden",
                  "visitors" => 3,
-                 "bounce_rate" => 67,
-                 "visit_duration" => 300
+                 "bounce_rate" => 67.0,
+                 "visit_duration" => 300.0,
+                 "percentage" => 60.0
                },
                %{
                  "name" => "oat milk",
                  "visitors" => 2,
-                 "bounce_rate" => 50,
-                 "visit_duration" => 800.0
+                 "bounce_rate" => 50.0,
+                 "visit_duration" => 800.0,
+                 "percentage" => 40.0
                }
              ]
     end
@@ -1275,7 +1944,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "oat milk",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 100.0
                }
              ]
 
@@ -1289,8 +1959,114 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                %{
                  "name" => "oat milk",
                  "visitors" => 2,
-                 "bounce_rate" => 50,
-                 "visit_duration" => 800.0
+                 "bounce_rate" => 50.0,
+                 "visit_duration" => 800.0,
+                 "percentage" => 100.0
+               }
+             ]
+    end
+
+    @tag :ee_only
+    test "return revenue metrics for UTM terms breakdown", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview,
+          user_id: 1,
+          utm_term: "oat milk"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 1,
+          revenue_reporting_amount: Decimal.new("1000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 2,
+          utm_term: "oat milk"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 2,
+          revenue_reporting_amount: Decimal.new("2000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 3,
+          utm_term: "oat milk"
+        ),
+        build(:pageview,
+          user_id: 4,
+          utm_term: "Sweden"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 4,
+          revenue_reporting_amount: Decimal.new("500"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 5,
+          utm_term: "Sweden"
+        ),
+        build(:pageview, user_id: 6),
+        build(:event,
+          name: "Payment",
+          user_id: 6,
+          revenue_reporting_amount: Decimal.new("600"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview, user_id: 7),
+        build(:event,
+          name: "Payment",
+          user_id: 7,
+          revenue_reporting_amount: nil
+        )
+      ])
+
+      insert(:goal, %{site: site, event_name: "Payment", currency: :USD})
+
+      filters = Jason.encode!([[:is, "event:goal", ["Payment"]]])
+      order_by = Jason.encode!([["visitors", "desc"]])
+
+      q = "?filters=#{filters}&order_by=#{order_by}&detailed=true&period=day&page=1&limit=100"
+
+      conn = get(conn, "/api/stats/#{site.domain}/utm_terms#{q}")
+
+      assert json_response(conn, 200)["results"] == [
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$1,500.00",
+                   "short" => "$1.5K",
+                   "value" => 1500.0
+                 },
+                 "conversion_rate" => 66.67,
+                 "name" => "oat milk",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$3,000.00",
+                   "short" => "$3.0K",
+                   "value" => 3000.0
+                 },
+                 "total_visitors" => 3,
+                 "visitors" => 2
+               },
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "conversion_rate" => 50.0,
+                 "name" => "Sweden",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "total_visitors" => 2,
+                 "visitors" => 1
                }
              ]
     end
@@ -1351,13 +2127,15 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "blog",
                  "visitors" => 2,
                  "bounce_rate" => 100,
-                 "visit_duration" => 0
+                 "visit_duration" => 0,
+                 "percentage" => 66.67
                },
                %{
                  "name" => "ad",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 33.33
                }
              ]
 
@@ -1371,14 +2149,16 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                %{
                  "name" => "blog",
                  "visitors" => 3,
-                 "bounce_rate" => 67,
-                 "visit_duration" => 300
+                 "bounce_rate" => 67.0,
+                 "visit_duration" => 300.0,
+                 "percentage" => 60.0
                },
                %{
                  "name" => "ad",
                  "visitors" => 2,
-                 "bounce_rate" => 50,
-                 "visit_duration" => 800.0
+                 "bounce_rate" => 50.0,
+                 "visit_duration" => 800.0,
+                 "percentage" => 40.0
                }
              ]
     end
@@ -1435,7 +2215,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "ad",
                  "visitors" => 1,
                  "bounce_rate" => 0,
-                 "visit_duration" => 900
+                 "visit_duration" => 900,
+                 "percentage" => 100.0
                }
              ]
 
@@ -1449,8 +2230,114 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                %{
                  "name" => "ad",
                  "visitors" => 2,
-                 "bounce_rate" => 50,
-                 "visit_duration" => 800.0
+                 "bounce_rate" => 50.0,
+                 "visit_duration" => 800.0,
+                 "percentage" => 100.0
+               }
+             ]
+    end
+
+    @tag :ee_only
+    test "return revenue metrics for UTM contents breakdown", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview,
+          user_id: 1,
+          utm_content: "ad"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 1,
+          revenue_reporting_amount: Decimal.new("1000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 2,
+          utm_content: "ad"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 2,
+          revenue_reporting_amount: Decimal.new("2000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 3,
+          utm_content: "ad"
+        ),
+        build(:pageview,
+          user_id: 4,
+          utm_content: "blog"
+        ),
+        build(:event,
+          name: "Payment",
+          user_id: 4,
+          revenue_reporting_amount: Decimal.new("500"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview,
+          user_id: 5,
+          utm_content: "blog"
+        ),
+        build(:pageview, user_id: 6),
+        build(:event,
+          name: "Payment",
+          user_id: 6,
+          revenue_reporting_amount: Decimal.new("600"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview, user_id: 7),
+        build(:event,
+          name: "Payment",
+          user_id: 7,
+          revenue_reporting_amount: nil
+        )
+      ])
+
+      insert(:goal, %{site: site, event_name: "Payment", currency: :USD})
+
+      filters = Jason.encode!([[:is, "event:goal", ["Payment"]]])
+      order_by = Jason.encode!([["visitors", "desc"]])
+
+      q = "?filters=#{filters}&order_by=#{order_by}&detailed=true&period=day&page=1&limit=100"
+
+      conn = get(conn, "/api/stats/#{site.domain}/utm_contents#{q}")
+
+      assert json_response(conn, 200)["results"] == [
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$1,500.00",
+                   "short" => "$1.5K",
+                   "value" => 1500.0
+                 },
+                 "conversion_rate" => 66.67,
+                 "name" => "ad",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$3,000.00",
+                   "short" => "$3.0K",
+                   "value" => 3000.0
+                 },
+                 "total_visitors" => 3,
+                 "visitors" => 2
+               },
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "conversion_rate" => 50.0,
+                 "name" => "blog",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "total_visitors" => 2,
+                 "visitors" => 1
                }
              ]
     end
@@ -1852,8 +2739,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
         )
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "10words.com", "visitors" => 2},
-               %{"name" => "10words.com/page1", "visitors" => 1}
+               %{"name" => "10words.com", "visitors" => 2, "percentage" => 66.67},
+               %{"name" => "10words.com/page1", "visitors" => 1, "percentage" => 33.33}
              ]
     end
 
@@ -1898,7 +2785,7 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
         )
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "example.com/page1", "visitors" => 1}
+               %{"name" => "example.com/page1", "visitors" => 1, "percentage" => 100.0}
              ]
     end
 
@@ -1939,7 +2826,8 @@ defmodule PlausibleWeb.Api.StatsController.SourcesTest do
                  "name" => "10words.com",
                  "visitors" => 2,
                  "bounce_rate" => 50.0,
-                 "visit_duration" => 450
+                 "visit_duration" => 450,
+                 "percentage" => 100.0
                }
              ]
     end

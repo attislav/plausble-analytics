@@ -81,6 +81,17 @@ another_site =
 user2 = new_user(name: "Mary Jane", email: "user2@plausible.test", password: "plausible")
 site2 = new_site(domain: "computer.example.com", owner: user2)
 invite_guest(site2, user, inviter: user2, role: :viewer)
+invite_transfer(site2, user, inviter: user2)
+invite_member(team_of(user), user2, inviter: user, role: :editor)
+
+user3 = new_user(name: "Harvey Dent", email: "user3@plausible.test", password: "plausible")
+_site3 = new_site(domain: "bank.example.com", owner: user3)
+subscribe_to_business_plan(user3)
+invite_member(team_of(user3), "user@plausible.test", role: :editor, inviter: user3)
+
+user4 = new_user(name: "Bruce Wayne", email: "user4@plausible.test", password: "plausible")
+site4 = new_site(domain: "cave.example.com", owner: user4)
+invite_transfer(site4, "user@plausible.test", inviter: user4)
 
 on_ee do
   solo_user = new_user(name: "Solo User", email: "solo@plausible.test", password: "plausible")
@@ -125,12 +136,40 @@ seeded_token = Plausible.Plugins.API.Token.generate("seed-token")
 {:ok, _goal5} = Plausible.Goals.create(site, %{"page_path" => Enum.random(long_random_paths)})
 {:ok, outbound} = Plausible.Goals.create(site, %{"event_name" => "Outbound Link: Click"})
 
+{:ok, goal6} =
+  Plausible.Goals.create(site, %{
+    "page_path" => "/",
+    "display_name" => "Anonymous visit to /",
+    "custom_props" => %{"logged_in" => "false"}
+  })
+
+{:ok, goal7} =
+  Plausible.Goals.create(site, %{
+    "page_path" => "/",
+    "display_name" => "Authenticated visit to /",
+    "custom_props" => %{"logged_in" => "true"}
+  })
+
 if ee?() do
   {:ok, _funnel} =
     Plausible.Funnels.create(site, "From homepage to login", [
       %{"goal_id" => goal1.id},
       %{"goal_id" => goal2.id},
       %{"goal_id" => goal3.id}
+    ])
+
+  {:ok, _funnel} =
+    Plausible.Funnels.create(site, "From anonymous homepage to login", [
+      %{"goal_id" => goal6.id},
+      %{"goal_id" => goal2.id},
+      %{"goal_id" => goal3.id}
+    ])
+
+  {:ok, _funnel} =
+    Plausible.Funnels.create(site, "From logged in homepage to Purchase", [
+      %{"goal_id" => goal7.id},
+      %{"goal_id" => goal2.id},
+      %{"goal_id" => revenue_goal.id}
     ])
 end
 

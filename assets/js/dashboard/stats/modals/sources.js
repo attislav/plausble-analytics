@@ -7,8 +7,8 @@ import {
 import BreakdownModal from './breakdown-modal'
 import * as metrics from '../reports/metrics'
 import * as url from '../../util/url'
-import { addFilter } from '../../query'
-import { useQueryContext } from '../../query-context'
+import { addFilter, revenueAvailable } from '../../dashboard-state'
+import { useDashboardStateContext } from '../../dashboard-state-context'
 import { useSiteContext } from '../../site-context'
 import { SortDirection } from '../../hooks/use-order-by'
 import { SourceFavicon } from '../sources/source-favicon'
@@ -16,7 +16,7 @@ import { SourceFavicon } from '../sources/source-favicon'
 const VIEWS = {
   sources: {
     info: {
-      title: 'Top Sources',
+      title: 'Top sources',
       dimension: 'source',
       endpoint: '/sources',
       dimensionLabel: 'Source',
@@ -33,7 +33,7 @@ const VIEWS = {
   },
   channels: {
     info: {
-      title: 'Top Acquisition Channels',
+      title: 'Top acquisition channels',
       dimension: 'channel',
       endpoint: '/channels',
       dimensionLabel: 'Channel',
@@ -42,54 +42,58 @@ const VIEWS = {
   },
   utm_mediums: {
     info: {
-      title: 'Top UTM Mediums',
+      title: 'Top UTM mediums',
       dimension: 'utm_medium',
       endpoint: '/utm_mediums',
-      dimensionLabel: 'UTM Medium',
+      dimensionLabel: 'UTM medium',
       defaultOrder: ['visitors', SortDirection.desc]
     }
   },
   utm_sources: {
     info: {
-      title: 'Top UTM Sources',
+      title: 'Top UTM sources',
       dimension: 'utm_source',
       endpoint: '/utm_sources',
-      dimensionLabel: 'UTM Source',
+      dimensionLabel: 'UTM source',
       defaultOrder: ['visitors', SortDirection.desc]
     }
   },
   utm_campaigns: {
     info: {
-      title: 'Top UTM Campaigns',
+      title: 'Top UTM campaigns',
       dimension: 'utm_campaign',
       endpoint: '/utm_campaigns',
-      dimensionLabel: 'UTM Campaign',
+      dimensionLabel: 'UTM campaign',
       defaultOrder: ['visitors', SortDirection.desc]
     }
   },
   utm_contents: {
     info: {
-      title: 'Top UTM Contents',
+      title: 'Top UTM contents',
       dimension: 'utm_content',
       endpoint: '/utm_contents',
-      dimensionLabel: 'UTM Content',
+      dimensionLabel: 'UTM content',
       defaultOrder: ['visitors', SortDirection.desc]
     }
   },
   utm_terms: {
     info: {
-      title: 'Top UTM Terms',
+      title: 'Top UTM terms',
       dimension: 'utm_term',
       endpoint: '/utm_terms',
-      dimensionLabel: 'UTM Term',
+      dimensionLabel: 'UTM term',
       defaultOrder: ['visitors', SortDirection.desc]
     }
   }
 }
 
 function SourcesModal({ currentView }) {
-  const { query } = useQueryContext()
+  const { dashboardState } = useDashboardStateContext()
   const site = useSiteContext()
+
+  /*global BUILD_EXTRA*/
+  const showRevenueMetrics =
+    BUILD_EXTRA && revenueAvailable(dashboardState, site)
 
   let reportInfo = VIEWS[currentView].info
   reportInfo = {
@@ -108,8 +112,8 @@ function SourcesModal({ currentView }) {
   )
 
   const addSearchFilter = useCallback(
-    (query, searchString) => {
-      return addFilter(query, [
+    (dashboardState, searchString) => {
+      return addFilter(dashboardState, [
         'contains',
         reportInfo.dimension,
         [searchString],
@@ -120,28 +124,33 @@ function SourcesModal({ currentView }) {
   )
 
   function chooseMetrics() {
-    if (hasConversionGoalFilter(query)) {
+    if (hasConversionGoalFilter(dashboardState)) {
       return [
         metrics.createTotalVisitors(),
         metrics.createVisitors({
-          renderLabel: (_query) => 'Conversions',
+          renderLabel: (_dashboardState) => 'Conversions',
           width: 'w-28'
         }),
-        metrics.createConversionRate()
-      ]
+        metrics.createConversionRate(),
+        showRevenueMetrics && metrics.createTotalRevenue(),
+        showRevenueMetrics && metrics.createAverageRevenue()
+      ].filter((metric) => !!metric)
     }
 
-    if (isRealTimeDashboard(query)) {
+    if (
+      isRealTimeDashboard(dashboardState) &&
+      !hasConversionGoalFilter(dashboardState)
+    ) {
       return [
         metrics.createVisitors({
-          renderLabel: (_query) => 'Current visitors',
-          width: 'w-36'
+          renderLabel: (_dashboardState) => 'Current visitors',
+          width: 'w-32'
         })
       ]
     }
 
     return [
-      metrics.createVisitors({ renderLabel: (_query) => 'Visitors' }),
+      metrics.createVisitors({ renderLabel: (_dashboardState) => 'Visitors' }),
       metrics.createBounceRate(),
       metrics.createVisitDuration()
     ]

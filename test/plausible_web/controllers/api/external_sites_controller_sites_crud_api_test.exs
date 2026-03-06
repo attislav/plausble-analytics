@@ -2,10 +2,8 @@ defmodule PlausibleWeb.Api.ExternalSitesControllerSitesCrudApiTest do
   @moduledoc """
   Tests for Sites create/read/update/delete API.
   """
-  use Plausible
   use PlausibleWeb.ConnCase
   use Plausible.Repo
-  use Plausible.Teams.Test
   use Bamboo.Test
 
   on_ee do
@@ -757,7 +755,8 @@ defmodule PlausibleWeb.Api.ExternalSitesControllerSitesCrudApiTest do
         subscribe_to_enterprise_plan(user,
           features: [
             Plausible.Billing.Feature.StatsAPI,
-            Plausible.Billing.Feature.SitesAPI
+            Plausible.Billing.Feature.SitesAPI,
+            Plausible.Billing.Feature.ConsolidatedView
           ]
         )
 

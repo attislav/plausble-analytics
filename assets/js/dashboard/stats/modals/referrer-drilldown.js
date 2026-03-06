@@ -9,16 +9,20 @@ import {
 import BreakdownModal from './breakdown-modal'
 import * as metrics from '../reports/metrics'
 import * as url from '../../util/url'
-import { addFilter } from '../../query'
-import { useQueryContext } from '../../query-context'
+import { addFilter, revenueAvailable } from '../../dashboard-state'
+import { useDashboardStateContext } from '../../dashboard-state-context'
 import { useSiteContext } from '../../site-context'
 import { SortDirection } from '../../hooks/use-order-by'
 import { SourceFavicon } from '../sources/source-favicon'
 
 function ReferrerDrilldownModal() {
   const { referrer } = useParams()
-  const { query } = useQueryContext()
+  const { dashboardState } = useDashboardStateContext()
   const site = useSiteContext()
+
+  /*global BUILD_EXTRA*/
+  const showRevenueMetrics =
+    BUILD_EXTRA && revenueAvailable(dashboardState, site)
 
   const reportInfo = {
     title: 'Referrer Drilldown',
@@ -42,8 +46,8 @@ function ReferrerDrilldownModal() {
   )
 
   const addSearchFilter = useCallback(
-    (query, searchString) => {
-      return addFilter(query, [
+    (dashboardState, searchString) => {
+      return addFilter(dashboardState, [
         'contains',
         reportInfo.dimension,
         [searchString],
@@ -54,28 +58,33 @@ function ReferrerDrilldownModal() {
   )
 
   function chooseMetrics() {
-    if (hasConversionGoalFilter(query)) {
+    if (hasConversionGoalFilter(dashboardState)) {
       return [
         metrics.createTotalVisitors(),
         metrics.createVisitors({
-          renderLabel: (_query) => 'Conversions',
+          renderLabel: (_dashboardState) => 'Conversions',
           width: 'w-28'
         }),
-        metrics.createConversionRate()
-      ]
+        metrics.createConversionRate(),
+        showRevenueMetrics && metrics.createTotalRevenue(),
+        showRevenueMetrics && metrics.createAverageRevenue()
+      ].filter((metric) => !!metric)
     }
 
-    if (isRealTimeDashboard(query)) {
+    if (
+      isRealTimeDashboard(dashboardState) &&
+      !hasConversionGoalFilter(dashboardState)
+    ) {
       return [
         metrics.createVisitors({
-          renderLabel: (_query) => 'Current visitors',
-          width: 'w-36'
+          renderLabel: (_dashboardState) => 'Current visitors',
+          width: 'w-32'
         })
       ]
     }
 
     return [
-      metrics.createVisitors({ renderLabel: (_query) => 'Visitors' }),
+      metrics.createVisitors({ renderLabel: (_dashboardState) => 'Visitors' }),
       metrics.createBounceRate(),
       metrics.createVisitDuration()
     ]

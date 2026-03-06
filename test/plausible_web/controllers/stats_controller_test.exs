@@ -1,8 +1,6 @@
 defmodule PlausibleWeb.StatsControllerTest do
   use PlausibleWeb.ConnCase, async: false
   use Plausible.Repo
-  use Plausible.Teams.Test
-  import Plausible.Test.Support.HTML
 
   @react_container "div#stats-react-container"
 
@@ -30,7 +28,7 @@ defmodule PlausibleWeb.StatsControllerTest do
       assert text_of_attr(resp, @react_container, "data-current-user-id") == "null"
       assert text_of_attr(resp, @react_container, "data-embedded") == ""
       assert text_of_attr(resp, @react_container, "data-is-consolidated-view") == "false"
-      assert text_of_attr(resp, @react_container, "data-team-has-consolidated-view") == "false"
+      assert text_of_attr(resp, @react_container, "data-consolidated-view-available") == "false"
       assert text_of_attr(resp, @react_container, "data-team-identifier") == site.team.identifier
 
       assert "noindex, nofollow" ==
@@ -185,6 +183,8 @@ defmodule PlausibleWeb.StatsControllerTest do
         conn: conn,
         user: user
       } do
+        new_site(owner: user)
+        new_site(owner: user)
         cv = user |> team_of() |> new_consolidated_view()
 
         conn = get(conn, "/" <> cv.domain)
@@ -194,6 +194,23 @@ defmodule PlausibleWeb.StatsControllerTest do
         assert text_of_attr(resp, @react_container, "data-logged-in") == "true"
         assert text_of_attr(resp, @react_container, "data-current-user-role") == "owner"
         assert text_of_attr(resp, @react_container, "data-current-user-id") == "#{user.id}"
+      end
+
+      test "redirects to /sites if for some reason ineligible anymore", %{
+        conn: conn,
+        user: user
+      } do
+        new_site(owner: user)
+        new_site(owner: user)
+        cv = user |> team_of() |> new_consolidated_view()
+
+        user
+        |> team_of()
+        |> Plausible.Teams.Team.end_trial()
+        |> Plausible.Repo.update!()
+
+        conn = get(conn, "/" <> cv.domain)
+        assert redirected_to(conn, 302) == "/sites"
       end
     end
 
@@ -222,8 +239,8 @@ defmodule PlausibleWeb.StatsControllerTest do
       locked_site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
       conn = get(conn, "/" <> locked_site.domain)
       resp = html_response(conn, 200)
-      assert resp =~ "Dashboard Locked"
-      assert resp =~ "Please subscribe to the appropriate tier with the link below"
+      assert resp =~ "Your dashboard is unavailable"
+      assert resp =~ "Upgrade to the appropriate plan to restore access"
     end
 
     test "shows locked page if site is locked for billing role", %{conn: conn, user: user} do
@@ -234,8 +251,8 @@ defmodule PlausibleWeb.StatsControllerTest do
 
       conn = get(conn, "/" <> locked_site.domain)
       resp = html_response(conn, 200)
-      assert resp =~ "Dashboard Locked"
-      assert resp =~ "Please subscribe to the appropriate tier with the link below"
+      assert resp =~ "Your dashboard is unavailable"
+      assert resp =~ "Upgrade to the appropriate plan to restore access"
     end
 
     test "shows locked page if site is locked for viewer role", %{conn: conn, user: user} do
@@ -246,9 +263,9 @@ defmodule PlausibleWeb.StatsControllerTest do
 
       conn = get(conn, "/" <> locked_site.domain)
       resp = html_response(conn, 200)
-      assert resp =~ "Dashboard Locked"
-      refute resp =~ "Please subscribe to the appropriate tier with the link below"
-      assert resp =~ "Owner of this site must upgrade their subscription plan"
+      assert resp =~ "Your dashboard is unavailable"
+      refute resp =~ "Upgrade to the appropriate plan to restore access"
+      assert resp =~ "The owner of this site must upgrade their subscription plan"
     end
 
     test "shows locked page for anonymous" do
@@ -256,7 +273,7 @@ defmodule PlausibleWeb.StatsControllerTest do
       locked_site.team |> Ecto.Changeset.change(locked: true) |> Repo.update!()
       conn = get(build_conn(), "/" <> locked_site.domain)
       resp = html_response(conn, 200)
-      assert resp =~ "Dashboard Locked"
+      assert resp =~ "Your dashboard is unavailable"
       assert resp =~ "You can check back later or contact the site owner"
     end
 
@@ -567,10 +584,10 @@ defmodule PlausibleWeb.StatsControllerTest do
       assert result == [
                ["property", "value", "visitors", "events", "percentage"],
                ["author", "(none)", "3", "4", "50.0"],
-               ["author", "uku", "2", "2", "33.3"],
-               ["author", "marko", "1", "1", "16.7"],
-               ["logged_in", "(none)", "5", "5", "83.3"],
-               ["logged_in", "true", "1", "2", "16.7"],
+               ["author", "uku", "2", "2", "33.33"],
+               ["author", "marko", "1", "1", "16.67"],
+               ["logged_in", "(none)", "5", "5", "83.33"],
+               ["logged_in", "true", "1", "2", "16.67"],
                [""]
              ]
     end
@@ -1313,9 +1330,10 @@ defmodule PlausibleWeb.StatsControllerTest do
       assert response(conn, 200) =~ "Enter password"
     end
 
-    test "logs anonymous user in straight away if the link is not password-protected", %{
-      conn: conn
-    } do
+    test "if the shared link is not protected with a password, passes user immediately to dashboard",
+         %{
+           conn: conn
+         } do
       site = new_site(domain: "test-site.com")
       link = insert(:shared_link, site: site)
 
@@ -1327,7 +1345,34 @@ defmodule PlausibleWeb.StatsControllerTest do
       assert text_of_attr(resp, @react_container, "data-current-user-role") == "public"
     end
 
-    test "footer and header are shown when accessing public dashboard", %{
+    test "if the shared link is limited to a segment, only that segment is stuffed into data-segments",
+         %{
+           conn: conn
+         } do
+      site = new_site(domain: "test-site.com")
+      emea_site_segment = insert(:segment, name: "EMEA", site: site, type: :site)
+      apac_site_segment = insert(:segment, name: "APAC", site: site, type: :site)
+      link = insert(:shared_link, site: site, segment: emea_site_segment)
+
+      conn = get(conn, "/share/test-site.com/?auth=#{link.slug}")
+      resp = html_response(conn, 200)
+      assert resp =~ "stats-react-container"
+
+      assert text_of_attr(resp, @react_container, "data-limited-to-segment-id") ==
+               "#{emea_site_segment.id}"
+
+      assert text_of_attr(resp, @react_container, "data-segments") ==
+               emea_site_segment
+               |> Map.take([:id, :name, :type, :inserted_at, :updated_at, :segment_data])
+               |> List.wrap()
+               |> JSON.encode!()
+
+      refute resp =~ apac_site_segment.name
+
+      assert text_of_attr(resp, @react_container, "data-current-user-role") == "public"
+    end
+
+    test "footer and header are shown when accessing shared link dashboard", %{
       conn: conn
     } do
       site = new_site(domain: "test-site.com")
@@ -1388,7 +1433,7 @@ defmodule PlausibleWeb.StatsControllerTest do
 
       conn = get(conn, "/share/test-site.com/?auth=#{link.slug}")
 
-      assert html_response(conn, 200) =~ "Dashboard Locked"
+      assert html_response(conn, 200) =~ "Your dashboard is unavailable"
       refute String.contains?(html_response(conn, 200), "Back to my sites")
     end
 
@@ -1402,7 +1447,7 @@ defmodule PlausibleWeb.StatsControllerTest do
 
       conn = get(conn, "/share/test-site.com/?auth=#{link.slug}")
 
-      assert html_response(conn, 200) =~ "Shared Link Unavailable"
+      assert html_response(conn, 200) =~ "Shared link unavailable"
       refute String.contains?(html_response(conn, 200), "Back to my sites")
     end
 
@@ -1483,7 +1528,7 @@ defmodule PlausibleWeb.StatsControllerTest do
       site_link = insert(:shared_link, site: site, inserted_at: ~N[2021-12-31 00:00:00])
 
       conn = get(conn, "/share/#{site_link.slug}")
-      assert redirected_to(conn, 302) == "/share/#{site.domain}?auth=#{site_link.slug}"
+      assert redirected_to(conn, 302) == "/share/#{site.domain}/?auth=#{site_link.slug}"
     end
 
     test "it does nothing for newer links", %{conn: conn} do
@@ -1503,7 +1548,7 @@ defmodule PlausibleWeb.StatsControllerTest do
         insert(:shared_link, site: site, password_hash: Plausible.Auth.Password.hash("password"))
 
       conn = post(conn, "/share/#{link.slug}/authenticate", %{password: "password"})
-      assert redirected_to(conn, 302) == "/share/#{site.domain}?auth=#{link.slug}"
+      assert redirected_to(conn, 302) == "/share/#{site.domain}/?auth=#{link.slug}"
 
       conn = get(conn, "/share/#{site.domain}?auth=#{link.slug}")
       assert html_response(conn, 200) =~ "stats-react-container"
@@ -1533,7 +1578,7 @@ defmodule PlausibleWeb.StatsControllerTest do
         )
 
       conn = post(conn, "/share/#{link.slug}/authenticate", %{password: "password"})
-      assert redirected_to(conn, 302) == "/share/#{site.domain}?auth=#{link.slug}"
+      assert redirected_to(conn, 302) == "/share/#{site.domain}/?auth=#{link.slug}"
 
       conn = get(conn, "/share/#{site2.domain}?auth=#{link2.slug}")
       assert html_response(conn, 200) =~ "Enter password"
@@ -1550,33 +1595,21 @@ defmodule PlausibleWeb.StatsControllerTest do
       conn =
         get(
           conn,
-          "/share/#{site.domain}?auth=#{link.slug}&#{filters}"
+          "/share/#{URI.encode_www_form(site.domain)}?auth=#{link.slug}&#{filters}"
         )
 
       assert html_response(conn, 200) =~ "Enter password"
       html = html_response(conn, 200)
 
-      assert html =~ ~s(action="/share/#{link.slug}/authenticate?)
-      assert html =~ "f=is,browser,Firefox"
-      assert html =~ "f=is,country,EE"
-      assert html =~ "l=EE,Estonia"
+      expected_action_string =
+        "/share/#{URI.encode_www_form(link.slug)}/authenticate?auth=#{link.slug}&#{filters}"
+
+      assert text_of_attr(html, "form", "action") == expected_action_string
 
       conn =
         post(
           conn,
-          "/share/#{link.slug}/authenticate?#{filters}",
-          %{password: "password"}
-        )
-
-      expected_redirect =
-        "/share/#{URI.encode_www_form(site.domain)}?auth=#{link.slug}&#{filters}"
-
-      assert redirected_to(conn, 302) == expected_redirect
-
-      conn =
-        post(
-          conn,
-          "/share/#{link.slug}/authenticate?#{filters}",
+          expected_action_string,
           %{password: "WRONG!"}
         )
 
@@ -1584,32 +1617,123 @@ defmodule PlausibleWeb.StatsControllerTest do
       assert html =~ "Enter password"
       assert html =~ "Incorrect password"
 
-      assert text_of_attr(html, "form", "action") =~ "?#{filters}"
+      assert text_of_attr(html, "form", "action") == expected_action_string
 
       conn =
         post(
           conn,
-          "/share/#{link.slug}/authenticate?#{filters}",
+          expected_action_string,
           %{password: "password"}
         )
 
-      redirected_url = redirected_to(conn, 302)
-      assert redirected_url =~ filters
+      expected_redirect =
+        "/share/#{URI.encode_www_form(site.domain)}/?auth=#{link.slug}&#{filters}"
 
-      conn =
-        post(
-          conn,
-          "/share/#{link.slug}/authenticate?#{filters}",
-          %{password: "password"}
-        )
+      assert redirected_to(conn, 302) == expected_redirect
 
-      redirect_path = redirected_to(conn, 302)
-
-      conn = get(conn, redirect_path)
+      conn = get(conn, expected_redirect)
       assert html_response(conn, 200) =~ "stats-react-container"
-      assert redirect_path =~ filters
-      assert redirect_path =~ "auth=#{link.slug}"
     end
+  end
+
+  test "handles return_to during password authentication", %{conn: conn} do
+    site = new_site()
+
+    link =
+      insert(:shared_link, site: site, password_hash: Plausible.Auth.Password.hash("password"))
+
+    filters = "f=is,country,EE&l=EE,Estonia&f=is,browser,Firefox"
+
+    deep_path = "/filter/source"
+
+    conn =
+      get(
+        conn,
+        "/share/#{URI.encode_www_form(site.domain)}#{deep_path}?auth=#{link.slug}&#{filters}"
+      )
+
+    assert html_response(conn, 200) =~ "Enter password"
+    html = html_response(conn, 200)
+
+    expected_action_string =
+      "/share/#{link.slug}/authenticate?auth=#{link.slug}&#{filters}&#{URI.encode_query(%{"return_to" => deep_path})}"
+
+    assert text_of_attr(html, "form", "action") == expected_action_string
+
+    conn =
+      post(
+        conn,
+        expected_action_string,
+        %{password: "password"}
+      )
+
+    assert redirected_to(conn, 302) ==
+             "/share/#{URI.encode_www_form(site.domain)}#{deep_path}?auth=#{link.slug}&#{filters}"
+  end
+
+  test "return_to from query_params is discarded", %{conn: conn} do
+    site = new_site()
+
+    link =
+      insert(:shared_link, site: site, password_hash: Plausible.Auth.Password.hash("password"))
+
+    conn =
+      get(
+        conn,
+        "/share/#{URI.encode_www_form(site.domain)}/pages?auth=#{link.slug}&return_to=%2Ffoobar"
+      )
+
+    assert html_response(conn, 200) =~ "Enter password"
+    html = html_response(conn, 200)
+
+    expected_action_string =
+      "/share/#{link.slug}/authenticate?auth=#{link.slug}&return_to=%2Fpages"
+
+    assert text_of_attr(html, "form", "action") == expected_action_string
+
+    conn =
+      post(
+        conn,
+        expected_action_string,
+        %{password: "password"}
+      )
+
+    assert redirected_to(conn, 302) ==
+             "/share/#{URI.encode_www_form(site.domain)}/pages?auth=#{link.slug}"
+  end
+
+  test "return_to doesn't allow navigating out of dashboard context", %{conn: conn} do
+    site = new_site()
+
+    link =
+      insert(:shared_link, site: site, password_hash: Plausible.Auth.Password.hash("password"))
+
+    deep_path = "/../../settings/api-keys"
+    cleaned_deep_path = "/settings/api-keys"
+
+    conn =
+      get(
+        conn,
+        "/share/#{URI.encode_www_form(site.domain)}#{deep_path}?auth=#{link.slug}&theme=dark"
+      )
+
+    assert html_response(conn, 200) =~ "Enter password"
+    html = html_response(conn, 200)
+
+    expected_action_string =
+      "/share/#{link.slug}/authenticate?auth=#{link.slug}&theme=dark&#{URI.encode_query(%{"return_to" => deep_path})}"
+
+    assert text_of_attr(html, "form", "action") == expected_action_string
+
+    conn =
+      post(
+        conn,
+        expected_action_string,
+        %{password: "password"}
+      )
+
+    assert redirected_to(conn, 302) ==
+             "/share/#{URI.encode_www_form(site.domain)}#{cleaned_deep_path}?auth=#{link.slug}&theme=dark"
   end
 
   describe "dogfood tracking" do
@@ -1663,7 +1787,7 @@ defmodule PlausibleWeb.StatsControllerTest do
 
       script_params = html |> get_script_params()
 
-      assert html =~ "Dashboard Locked"
+      assert html =~ "Your dashboard is unavailable"
       assert script_params["location_override"] == PlausibleWeb.Endpoint.url() <> "/:dashboard"
     end
 
@@ -1678,7 +1802,7 @@ defmodule PlausibleWeb.StatsControllerTest do
 
       script_params = get_script_params(html)
 
-      assert html =~ "Shared Link Unavailable"
+      assert html =~ "Shared link unavailable"
 
       assert script_params["location_override"] ==
                PlausibleWeb.Endpoint.url() <> "/share/:dashboard"

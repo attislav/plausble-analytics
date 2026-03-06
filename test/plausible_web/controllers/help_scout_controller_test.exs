@@ -1,12 +1,9 @@
 defmodule PlausibleWeb.HelpScoutControllerTest do
   use PlausibleWeb.ConnCase, async: true
-  use Plausible
 
   @moduletag :ee_only
 
   on_ee do
-    import Plausible.Teams.Test
-
     alias Plausible.HelpScout
 
     describe "callback/2" do
@@ -163,7 +160,7 @@ defmodule PlausibleWeb.HelpScoutControllerTest do
         assert html = html_response(conn, 200)
         assert html =~ Routes.customer_support_user_path(PlausibleWeb.Endpoint, :show, user.id)
         assert html =~ "Some user notes"
-        assert html =~ "My Personal Sites"
+        assert html =~ "My personal sites"
         assert html =~ "HS Integration Test Team"
       end
 
@@ -193,7 +190,7 @@ defmodule PlausibleWeb.HelpScoutControllerTest do
 
         assert html = html_response(conn, 200)
         refute html =~ "HS Integration Test Team"
-        refute html =~ "My Personal Sites"
+        refute html =~ "My personal sites"
         assert html =~ "Some user notes"
       end
 
@@ -223,7 +220,7 @@ defmodule PlausibleWeb.HelpScoutControllerTest do
 
         assert html = html_response(conn, 200)
         assert html =~ "HS Integration Test Team"
-        refute html =~ "My Personal Sites"
+        refute html =~ "My personal sites"
         assert html =~ "Some user notes"
       end
 

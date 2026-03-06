@@ -12,21 +12,20 @@ defmodule PlausibleWeb.CustomerSupport.Team.Components.ConsolidatedViews do
   def update(%{team: team}, socket) do
     consolidated_view = ConsolidatedView.get(team)
 
-    hourly_stats =
+    sparkline_intervals =
       with true <- connected?(socket),
-           {:ok, hourly_stats} <- Stats.ConsolidatedView.safe_overview_24h(consolidated_view) do
-        hourly_stats.intervals
+           {:ok, sparkline} <- Stats.Sparkline.safe_overview_24h(consolidated_view) do
+        sparkline.intervals
       else
         _ ->
-          Stats.ConsolidatedView.empty_24h_intervals()
-          |> Enum.map(fn {i, v} -> %{interval: i, visitors: v} end)
+          Stats.Sparkline.empty_24h_intervals()
       end
 
     {:ok,
      assign(socket,
        team: team,
        consolidated_views: List.wrap(consolidated_view),
-       hourly_stats: hourly_stats
+       sparkline_intervals: sparkline_intervals
      )}
   end
 
@@ -45,6 +44,7 @@ defmodule PlausibleWeb.CustomerSupport.Team.Components.ConsolidatedViews do
           <:thead>
             <.th>Domain</.th>
             <.th>Timezone</.th>
+            <.th>Available?</.th>
             <.th invisible>Dashboard</.th>
             <.th invisible>24H</.th>
             <.th invisible>Delete</.th>
@@ -53,6 +53,7 @@ defmodule PlausibleWeb.CustomerSupport.Team.Components.ConsolidatedViews do
           <:tbody :let={consolidated_view}>
             <.td>{consolidated_view.domain}</.td>
             <.td>{consolidated_view.timezone}</.td>
+            <.td>{availability(@team)}</.td>
             <.td>
               <.styled_link
                 new_tab={true}
@@ -65,7 +66,7 @@ defmodule PlausibleWeb.CustomerSupport.Team.Components.ConsolidatedViews do
             <.td>
               <span class="h-[24px] text-indigo-500">
                 <PlausibleWeb.Live.Components.Visitors.chart
-                  intervals={@hourly_stats}
+                  intervals={@sparkline_intervals}
                   height={20}
                 />
               </span>
@@ -74,7 +75,7 @@ defmodule PlausibleWeb.CustomerSupport.Team.Components.ConsolidatedViews do
               <.delete_button
                 phx-click="delete-consolidated-view"
                 phx-target={@myself}
-                data-confirm="Are you sure you want to delete this consolidated view?"
+                data-confirm="Are you sure you want to delete this consolidated view? All existing consolidated view configuration will be lost. The view itself will be recreated whenever eligible subscription/trial accesses /sites for that team."
               />
             </.td>
           </:tbody>
@@ -100,5 +101,12 @@ defmodule PlausibleWeb.CustomerSupport.Team.Components.ConsolidatedViews do
     ConsolidatedView.disable(socket.assigns.team)
     success("Deleted consolidated view")
     {:noreply, assign(socket, consolidated_views: [])}
+  end
+
+  defp availability(team) do
+    case Plausible.Billing.Feature.ConsolidatedView.check_availability(team) do
+      :ok -> "Yes"
+      {:error, :upgrade_required} -> "No - upgrade required"
+    end
   end
 end
