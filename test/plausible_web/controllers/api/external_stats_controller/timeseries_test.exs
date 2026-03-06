@@ -1,6 +1,5 @@
 defmodule PlausibleWeb.Api.ExternalStatsController.TimeseriesTest do
   use PlausibleWeb.ConnCase
-  use Plausible.Teams.Test
   alias Plausible.Billing.Feature
 
   setup [:create_user, :create_site, :create_api_key, :use_api_key]
@@ -616,7 +615,11 @@ defmodule PlausibleWeb.Api.ExternalStatsController.TimeseriesTest do
           user_id: @user_id,
           timestamp: ~N[2021-01-01 00:25:00]
         ),
-        build(:pageview, pathname: "/blog", user_id: @user_id, timestamp: ~N[2021-01-01 00:25:00]),
+        build(:pageview,
+          pathname: "/blog",
+          user_id: @user_id,
+          timestamp: ~N[2021-01-01 00:25:00]
+        ),
         build(:pageview, pathname: "/", timestamp: ~N[2021-01-01 00:25:00])
       ])
 

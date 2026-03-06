@@ -14,8 +14,8 @@ defmodule PlausibleWeb.Api.StatsController.OperatingSystemsTest do
       conn = get(conn, "/api/stats/#{site.domain}/operating-systems?period=day")
 
       assert json_response(conn, 200)["results"] == [
-               %{"name" => "Mac", "visitors" => 2, "percentage" => 66.7},
-               %{"name" => "Android", "visitors" => 1, "percentage" => 33.3}
+               %{"name" => "Mac", "visitors" => 2, "percentage" => 66.67},
+               %{"name" => "Android", "visitors" => 1, "percentage" => 33.33}
              ]
     end
 
@@ -175,8 +175,8 @@ defmodule PlausibleWeb.Api.StatsController.OperatingSystemsTest do
       conn1 = get(conn, "/api/stats/#{site.domain}/operating-systems?period=day")
 
       assert json_response(conn1, 200)["results"] == [
-               %{"name" => "Mac", "visitors" => 2, "percentage" => 66.7},
-               %{"name" => "Android", "visitors" => 1, "percentage" => 33.3}
+               %{"name" => "Mac", "visitors" => 2, "percentage" => 66.67},
+               %{"name" => "Android", "visitors" => 1, "percentage" => 33.33}
              ]
 
       conn2 =
@@ -209,6 +209,114 @@ defmodule PlausibleWeb.Api.StatsController.OperatingSystemsTest do
                  "total_visitors" => 2,
                  "visitors" => 1,
                  "conversion_rate" => 50.0
+               }
+             ]
+    end
+
+    @tag :ee_only
+    test "return revenue metrics for operating systems breakdown", %{conn: conn, site: site} do
+      populate_stats(site, [
+        build(:pageview, user_id: 1, operating_system: "Mac"),
+        build(:event,
+          name: "Payment",
+          user_id: 1,
+          revenue_reporting_amount: Decimal.new("1000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview, user_id: 2, operating_system: "Mac"),
+        build(:event,
+          name: "Payment",
+          user_id: 2,
+          revenue_reporting_amount: Decimal.new("2000"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview, user_id: 3, operating_system: "Mac"),
+        build(:pageview, user_id: 4, operating_system: "Android"),
+        build(:event,
+          name: "Payment",
+          user_id: 4,
+          revenue_reporting_amount: Decimal.new("500"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview, user_id: 5, operating_system: "Android"),
+        build(:pageview, user_id: 6),
+        build(:event,
+          name: "Payment",
+          user_id: 6,
+          revenue_reporting_amount: Decimal.new("600"),
+          revenue_reporting_currency: "USD"
+        ),
+        build(:pageview, user_id: 7),
+        build(:event,
+          name: "Payment",
+          user_id: 7,
+          revenue_reporting_amount: nil
+        )
+      ])
+
+      insert(:goal, %{site: site, event_name: "Payment", currency: :USD})
+
+      filters = Jason.encode!([[:is, "event:goal", ["Payment"]]])
+      order_by = Jason.encode!([["visitors", "desc"]])
+
+      q = "?filters=#{filters}&order_by=#{order_by}&detailed=true&period=day&page=1&limit=100"
+
+      conn = get(conn, "/api/stats/#{site.domain}/operating-systems#{q}")
+
+      assert json_response(conn, 200)["results"] == [
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$600.00",
+                   "short" => "$600.0",
+                   "value" => 600.0
+                 },
+                 "conversion_rate" => 100.0,
+                 "name" => "(not set)",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$600.00",
+                   "short" => "$600.0",
+                   "value" => 600.0
+                 },
+                 "total_visitors" => 2,
+                 "visitors" => 2
+               },
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$1,500.00",
+                   "short" => "$1.5K",
+                   "value" => 1500.0
+                 },
+                 "conversion_rate" => 66.67,
+                 "name" => "Mac",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$3,000.00",
+                   "short" => "$3.0K",
+                   "value" => 3000.0
+                 },
+                 "total_visitors" => 3,
+                 "visitors" => 2
+               },
+               %{
+                 "average_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "conversion_rate" => 50.0,
+                 "name" => "Android",
+                 "total_revenue" => %{
+                   "currency" => "USD",
+                   "long" => "$500.00",
+                   "short" => "$500.0",
+                   "value" => 500.0
+                 },
+                 "total_visitors" => 2,
+                 "visitors" => 1
                }
              ]
     end
@@ -249,14 +357,14 @@ defmodule PlausibleWeb.Api.StatsController.OperatingSystemsTest do
                %{
                  "name" => "Mac 10.16",
                  "visitors" => 2,
-                 "percentage" => 66.7,
+                 "percentage" => 66.67,
                  "os" => "Mac",
                  "version" => "10.16"
                },
                %{
                  "name" => "Mac 10.15",
                  "visitors" => 1,
-                 "percentage" => 33.3,
+                 "percentage" => 33.33,
                  "os" => "Mac",
                  "version" => "10.15"
                }

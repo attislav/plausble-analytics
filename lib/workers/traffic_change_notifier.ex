@@ -2,8 +2,9 @@ defmodule Plausible.Workers.TrafficChangeNotifier do
   @moduledoc """
   Oban service sending out traffic drop/spike notifications
   """
+  use Plausible
   use Plausible.Repo
-  alias Plausible.Stats.{Query, Clickhouse}
+  alias Plausible.Stats.{Clickhouse, ParsedQueryParams, QueryBuilder}
   alias Plausible.Site.TrafficChangeNotification
 
   alias PlausibleWeb.Router.Helpers, as: Routes
@@ -28,30 +29,32 @@ defmodule Plausible.Workers.TrafficChangeNotifier do
           preload: [site: {s, team: t}]
       )
 
-    for notification <- notifications do
-      case notification.type do
-        :spike ->
-          current_visitors = Clickhouse.current_visitors(notification.site)
-
-          if current_visitors >= notification.threshold do
-            stats =
-              notification.site
-              |> get_traffic_spike_stats()
-              |> Map.put(:current_visitors, current_visitors)
-
-            notify_spike(notification, stats, now)
-          end
-
-        :drop ->
-          current_visitors = Clickhouse.current_visitors_12h(notification.site)
-
-          if current_visitors < notification.threshold do
-            notify_drop(notification, current_visitors, now)
-          end
-      end
+    for notification <- notifications, ok_to_send?(notification.site) do
+      handle_notification(notification, now)
     end
 
     :ok
+  end
+
+  defp handle_notification(%TrafficChangeNotification{type: :spike} = notification, now) do
+    current_visitors = Clickhouse.current_visitors(notification.site)
+
+    if current_visitors >= notification.threshold do
+      stats =
+        notification.site
+        |> get_traffic_spike_stats()
+        |> Map.put(:current_visitors, current_visitors)
+
+      notify_spike(notification, stats, now)
+    end
+  end
+
+  defp handle_notification(%TrafficChangeNotification{type: :drop} = notification, now) do
+    current_visitors = Clickhouse.current_visitors_12h(notification.site)
+
+    if current_visitors < notification.threshold do
+      notify_drop(notification, current_visitors, now)
+    end
   end
 
   defp notify_spike(notification, stats, now) do
@@ -126,22 +129,20 @@ defmodule Plausible.Workers.TrafficChangeNotifier do
     |> put_pages(site)
   end
 
-  @base_query_params %{
-    "metrics" => ["visitors"],
-    "pagination" => %{"limit" => 3},
-    "date_range" => "realtime"
+  @base_query_params %ParsedQueryParams{
+    metrics: [:visitors],
+    pagination: %{limit: 3, offset: 0},
+    input_date_range: :realtime
   }
 
   defp put_sources(stats, site) do
     query =
-      Query.build!(
+      QueryBuilder.build!(
         site,
-        :internal,
-        Map.merge(@base_query_params, %{
-          "site_id" => site.domain,
-          "dimensions" => ["visit:source"],
-          "filters" => [["is_not", "visit:source", ["Direct / None"]]]
-        })
+        struct!(@base_query_params,
+          dimensions: ["visit:source"],
+          filters: [[:is_not, "visit:source", ["Direct / None"]]]
+        )
       )
 
     %{results: sources} = Plausible.Stats.query(site, query)
@@ -150,15 +151,7 @@ defmodule Plausible.Workers.TrafficChangeNotifier do
   end
 
   defp put_pages(stats, site) do
-    query =
-      Query.build!(
-        site,
-        :internal,
-        Map.merge(@base_query_params, %{
-          "site_id" => site.domain,
-          "dimensions" => ["event:page"]
-        })
-      )
+    query = QueryBuilder.build!(site, struct!(@base_query_params, dimensions: ["event:page"]))
 
     %{results: pages} = Plausible.Stats.query(site, query)
 
@@ -174,5 +167,15 @@ defmodule Plausible.Workers.TrafficChangeNotifier do
       where: u.email == ^recipient_email
     )
     |> Repo.exists?()
+  end
+
+  on_ee do
+    defp ok_to_send?(site) do
+      Plausible.Sites.regular?(site) or
+        (Plausible.Sites.consolidated?(site) and
+           Plausible.ConsolidatedView.ok_to_display?(site.team))
+    end
+  else
+    defp ok_to_send?(_site), do: always(true)
   end
 end

@@ -1,20 +1,20 @@
 import React, { useCallback } from 'react'
 import Modal from './../modal'
-import { addFilter } from '../../../query'
+import { addFilter } from '../../../dashboard-state'
 import BreakdownModal from './../breakdown-modal'
 import * as url from '../../../util/url'
-import { useQueryContext } from '../../../query-context'
+import { useDashboardStateContext } from '../../../dashboard-state-context'
 import { useSiteContext } from '../../../site-context'
 import { osIconFor } from '../../devices'
 import chooseMetrics from './choose-metrics'
 import { SortDirection } from '../../../hooks/use-order-by'
 
 function OperatingSystemVersionsModal() {
-  const { query } = useQueryContext()
+  const { dashboardState } = useDashboardStateContext()
   const site = useSiteContext()
 
   const reportInfo = {
-    title: 'Operating System Versions',
+    title: 'Operating system versions',
     dimension: 'os_version',
     endpoint: url.apiPath(site, '/operating-system-versions'),
     dimensionLabel: 'Operating system version',
@@ -32,8 +32,8 @@ function OperatingSystemVersionsModal() {
   )
 
   const addSearchFilter = useCallback(
-    (query, searchString) => {
-      return addFilter(query, [
+    (dashboardState, searchString) => {
+      return addFilter(dashboardState, [
         'contains',
         reportInfo.dimension,
         [searchString],
@@ -49,7 +49,7 @@ function OperatingSystemVersionsModal() {
     <Modal>
       <BreakdownModal
         reportInfo={reportInfo}
-        metrics={chooseMetrics(query)}
+        metrics={chooseMetrics(dashboardState, site)}
         getFilterInfo={getFilterInfo}
         addSearchFilter={addSearchFilter}
         renderIcon={renderIcon}

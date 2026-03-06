@@ -17,29 +17,25 @@ export function ChangeArrow({
   hideNumber?: boolean
   absoluteChange?: number
 }) {
-  let formattedChange = null
-  if (!hideNumber) {
-    if (absoluteChange !== undefined) {
-      const sign = absoluteChange > 0 ? '+' : ''
-      formattedChange = ` ${sign}${numberShortFormatter(Math.abs(absoluteChange))}${absoluteChange < 0 ? '' : ''}`
-      formattedChange = ` ${absoluteChange > 0 ? '+' : '-'}${numberShortFormatter(Math.abs(absoluteChange))}`
-    } else {
-      formattedChange = ` ${numberShortFormatter(Math.abs(change))}%`
-    }
-  }
-
   let icon = null
   const arrowClassName = classNames(
     color(change, metric),
-    'inline-block h-3 w-3 stroke-[1px] stroke-current'
+    'mb-0.5 inline-block size-3 stroke-[1px] stroke-current'
   )
 
   if (change > 0) {
     icon = <ArrowUpRightIcon className={arrowClassName} />
   } else if (change < 0) {
     icon = <ArrowDownRightIcon className={arrowClassName} />
-  } else if (change === 0 && !hideNumber) {
-    icon = <>&#12336;</>
+  }
+
+  let formattedChange = null
+  if (!hideNumber) {
+    if (absoluteChange !== undefined) {
+      formattedChange = `${icon ? ' ' : ''}${absoluteChange > 0 ? '+' : '-'}${numberShortFormatter(Math.abs(absoluteChange))}`
+    } else {
+      formattedChange = `${icon ? ' ' : ''}${numberShortFormatter(Math.abs(change))}%`
+    }
   }
 
   return (

@@ -1,17 +1,13 @@
 defmodule PlausibleWeb.Live.FunnelSettingsTest do
-  use PlausibleWeb.ConnCase, async: true
-  use Plausible.Teams.Test
-  use Plausible
+  use PlausibleWeb.ConnCase, async: false
   @moduletag :ee_only
 
   on_ee do
     import Phoenix.LiveViewTest
-    import Plausible.Test.Support.HTML
 
     describe "GET /:domain/settings/funnels" do
       setup [:create_user, :log_in, :create_site]
 
-      @tag :ee_only
       test "premium feature notice renders", %{conn: conn, site: site, user: user} do
         user
         |> team_of()
@@ -21,7 +17,22 @@ defmodule PlausibleWeb.Live.FunnelSettingsTest do
         conn = get(conn, "/#{site.domain}/settings/funnels")
         resp = conn |> html_response(200)
 
-        assert text(resp) =~ "please upgrade your subscription"
+        assert text(resp) =~ "upgrade your subscription"
+      end
+
+      test "guest editors should be able to access funnel settings", %{site: site, conn: conn} do
+        guest_user = new_user()
+        add_guest(site, user: guest_user, role: :editor)
+
+        {:ok, conn: conn} = log_in(%{user: guest_user, conn: conn})
+
+        lock_notice =
+          conn
+          |> get("/#{site.domain}/settings/funnels")
+          |> html_response(200)
+          |> text_of_element("#lock-notice")
+
+        refute lock_notice =~ "upgrade your subscription"
       end
 
       test "lists funnels for the site and renders help link", %{conn: conn, site: site} do
@@ -33,12 +44,12 @@ defmodule PlausibleWeb.Live.FunnelSettingsTest do
         assert resp =~ "From blog to signup"
         assert resp =~ "From signup to blog"
         refute resp =~ "Your account does not have access"
-        refute resp =~ "please upgrade your subscription"
+        refute resp =~ "upgrade your subscription"
         assert element_exists?(resp, "a[href=\"https://plausible.io/docs/funnel-analysis\"]")
       end
 
       test "search funnels input is rendered", %{conn: conn, site: site} do
-        setup_goals(site)
+        {:ok, _} = setup_funnels(site)
         conn = get(conn, "/#{site.domain}/settings/funnels")
         resp = html_response(conn, 200)
         assert element_exists?(resp, ~s/input[type="text"]#filter-text/)
@@ -77,7 +88,7 @@ defmodule PlausibleWeb.Live.FunnelSettingsTest do
         conn = get(conn, "/#{site.domain}/settings/funnels")
 
         doc = conn |> html_response(200)
-        assert text(doc) =~ "Set up a few goals first"
+        assert text(doc) =~ "Set up a few goals"
 
         add_goals_path = Routes.site_path(conn, :settings_goals, site.domain)
         assert element_exists?(doc, ~s/a[href="#{add_goals_path}"]/)
@@ -89,6 +100,16 @@ defmodule PlausibleWeb.Live.FunnelSettingsTest do
 
     describe "FunnelSettings live view" do
       setup [:create_user, :log_in, :create_site]
+
+      test "allows dashboard toggle", %{conn: conn, site: site} do
+        lv = get_liveview(conn, site)
+        lv |> element("#feature-funnels-toggle button") |> render_click()
+        assert render(lv) =~ "Funnels are now hidden from your dashboard"
+        assert Plausible.Billing.Feature.Funnels.opted_out?(Plausible.Repo.reload!(site))
+        lv |> element("#feature-funnels-toggle button") |> render_click()
+        assert render(lv) =~ "Funnels are now visible again on your dashboard"
+        refute Plausible.Billing.Feature.Funnels.opted_out?(Plausible.Repo.reload!(site))
+      end
 
       test "allows list filtering / search", %{conn: conn, site: site} do
         {:ok, _} = setup_funnels(site, ["Funnel One", "Search Me"])

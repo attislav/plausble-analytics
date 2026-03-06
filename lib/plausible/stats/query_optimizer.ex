@@ -55,8 +55,9 @@ defmodule Plausible.Stats.QueryOptimizer do
       &add_missing_order_by/1,
       &update_time_in_order_by/1,
       &extend_hostname_filters_to_visit/1,
-      &remove_revenue_metrics_if_unavailable/1,
       &set_time_on_page_data/1,
+      &remove_time_on_page_if_unavailable/1,
+      &remove_revenue_metrics_if_unavailable/1,
       &trim_relative_date_range/1,
       &set_sql_join_type/1
     ]
@@ -100,7 +101,7 @@ defmodule Plausible.Stats.QueryOptimizer do
     end
   end
 
-  defp update_time_in_order_by(query) do
+  defp update_time_in_order_by(%Query{} = query) do
     order_by =
       query.order_by
       |> Enum.map(fn
@@ -126,7 +127,7 @@ defmodule Plausible.Stats.QueryOptimizer do
   # To avoid showing referrers across hostnames when event:hostname
   # filter is present for breakdowns, add entry/exit page hostname
   # filters
-  defp extend_hostname_filters_to_visit(query) do
+  defp extend_hostname_filters_to_visit(%Query{} = query) do
     # Note: Only works since event:hostname is only allowed as a top level filter
     hostname_filters =
       query.filters
@@ -214,6 +215,27 @@ defmodule Plausible.Stats.QueryOptimizer do
     defp remove_revenue_metrics_if_unavailable(query), do: query
   end
 
+  # Unavailable in this context means not implemented. Imported data is ignored in the
+  # aggregate legacy time on page query, while the legacy breakdown query includes it.
+  # We drop the metric to avoid reporting different numbers in different reports.
+  defp remove_time_on_page_if_unavailable(query) do
+    if query.include.drop_unavailable_time_on_page and time_on_page_unavailable?(query) do
+      Query.set(query, metrics: query.metrics -- [:time_on_page])
+    else
+      query
+    end
+  end
+
+  defp time_on_page_unavailable?(%Query{
+         include_imported: true,
+         dimensions: [],
+         time_on_page_data: %{include_legacy_metric: true}
+       }) do
+    true
+  end
+
+  defp time_on_page_unavailable?(_), do: false
+
   defp set_time_on_page_data(query) do
     case {:time_on_page in query.metrics, query.time_on_page_data} do
       {true, %{new_metric_visible: true, cutoff_date: cutoff_date}} ->
@@ -261,7 +283,7 @@ defmodule Plausible.Stats.QueryOptimizer do
 
   defp trim_relative_date_range(query), do: query
 
-  defp should_trim_date_range?(%Query{input_date_range: "month"} = query) do
+  defp should_trim_date_range?(%Query{input_date_range: :month} = query) do
     today = query.now |> DateTime.shift_zone!(query.timezone) |> DateTime.to_date()
     date_range = Query.date_range(query)
 
@@ -271,7 +293,7 @@ defmodule Plausible.Stats.QueryOptimizer do
     date_range.first == current_month_start and date_range.last == current_month_end
   end
 
-  defp should_trim_date_range?(%Query{input_date_range: "year"} = query) do
+  defp should_trim_date_range?(%Query{input_date_range: :year} = query) do
     today = query.now |> DateTime.shift_zone!(query.timezone) |> DateTime.to_date()
     date_range = Query.date_range(query)
 
@@ -281,17 +303,17 @@ defmodule Plausible.Stats.QueryOptimizer do
     date_range.first == current_year_start and date_range.last == current_year_end
   end
 
-  defp should_trim_date_range?(%Query{input_date_range: "day"} = query) do
+  defp should_trim_date_range?(%Query{input_date_range: :day} = query) do
     today = query.now |> DateTime.shift_zone!(query.timezone) |> DateTime.to_date()
     date_range = Query.date_range(query)
 
-    is_nil(query.include.comparisons) and date_range.first == today and date_range.last == today
+    is_nil(query.include.compare) and date_range.first == today and date_range.last == today
   end
 
   defp should_trim_date_range?(_query), do: false
 
   defp trim_date_range_to_now(query) do
-    if query.input_date_range == "day" do
+    if query.input_date_range == :day do
       time_range = query.utc_time_range |> DateTimeRange.to_timezone(query.timezone)
 
       current_hour =

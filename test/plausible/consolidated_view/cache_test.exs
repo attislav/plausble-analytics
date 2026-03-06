@@ -1,6 +1,5 @@
 defmodule Plausible.CondolidatedView.CacheTest do
   use Plausible.DataCase, async: true
-  use Plausible.Teams.Test
 
   on_ee do
     alias Plausible.ConsolidatedView
@@ -63,6 +62,7 @@ defmodule Plausible.CondolidatedView.CacheTest do
 
       owner = new_user()
       new_site(owner: owner, updated_at: yesterday())
+      new_site(owner: owner, updated_at: yesterday())
 
       team = team_of(owner)
 
@@ -70,7 +70,7 @@ defmodule Plausible.CondolidatedView.CacheTest do
 
       :ok = Cache.refresh_updated_recently(cache_name: test)
 
-      assert [_] = Cache.get(consolidated_view.domain, cache_name: test, force?: true)
+      assert [_, _] = Cache.get(consolidated_view.domain, cache_name: test, force?: true)
     end
 
     test "get_from_source/1", %{test: test} do

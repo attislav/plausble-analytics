@@ -1,20 +1,27 @@
 import React, { useCallback } from 'react'
 import Modal from './modal'
-import { hasConversionGoalFilter } from '../../util/filters'
-import { addFilter } from '../../query'
+import {
+  hasConversionGoalFilter,
+  isRealTimeDashboard
+} from '../../util/filters'
+import { addFilter, revenueAvailable } from '../../dashboard-state'
 import BreakdownModal from './breakdown-modal'
 import * as metrics from '../reports/metrics'
 import * as url from '../../util/url'
-import { useQueryContext } from '../../query-context'
+import { useDashboardStateContext } from '../../dashboard-state-context'
 import { useSiteContext } from '../../site-context'
 import { SortDirection } from '../../hooks/use-order-by'
 
 function ExitPagesModal() {
-  const { query } = useQueryContext()
+  const { dashboardState } = useDashboardStateContext()
   const site = useSiteContext()
 
+  /*global BUILD_EXTRA*/
+  const showRevenueMetrics =
+    BUILD_EXTRA && revenueAvailable(dashboardState, site)
+
   const reportInfo = {
-    title: 'Exit Pages',
+    title: 'Exit pages',
     dimension: 'exit_page',
     endpoint: url.apiPath(site, '/exit-pages'),
     dimensionLabel: 'Page url',
@@ -32,8 +39,8 @@ function ExitPagesModal() {
   )
 
   const addSearchFilter = useCallback(
-    (query, searchString) => {
-      return addFilter(query, [
+    (dashboardState, searchString) => {
+      return addFilter(dashboardState, [
         'contains',
         reportInfo.dimension,
         [searchString],
@@ -44,33 +51,39 @@ function ExitPagesModal() {
   )
 
   function chooseMetrics() {
-    if (hasConversionGoalFilter(query)) {
+    if (hasConversionGoalFilter(dashboardState)) {
       return [
         metrics.createTotalVisitors(),
         metrics.createVisitors({
-          renderLabel: (_query) => 'Conversions',
+          renderLabel: (_dashboardState) => 'Conversions',
           width: 'w-28'
         }),
-        metrics.createConversionRate()
-      ]
+        metrics.createConversionRate(),
+        showRevenueMetrics && metrics.createTotalRevenue(),
+        showRevenueMetrics && metrics.createAverageRevenue()
+      ].filter((metric) => !!metric)
     }
 
-    if (query.period === 'realtime') {
+    if (
+      isRealTimeDashboard(dashboardState) &&
+      !hasConversionGoalFilter(dashboardState)
+    ) {
       return [
         metrics.createVisitors({
-          renderLabel: (_query) => 'Current visitors',
-          width: 'w-36'
+          renderLabel: (_dashboardState) => 'Current visitors',
+          width: 'w-32'
         })
       ]
     }
 
     return [
       metrics.createVisitors({
-        renderLabel: (_query) => 'Visitors',
+        renderLabel: (_dashboardState) => 'Visitors',
         sortable: true
       }),
       metrics.createVisits({
-        renderLabel: (_query) => 'Total Exits',
+        renderLabel: (_dashboardState) => 'Total exits',
+        width: 'w-32',
         sortable: true
       }),
       metrics.createExitRate()

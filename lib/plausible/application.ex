@@ -151,7 +151,7 @@ defmodule Plausible.Application do
             adapter_opts: [
               n_lock_partitions: 1,
               ttl_check_interval: false,
-              read_concurrency: true
+              ets_options: [read_concurrency: true]
             ],
             warmers: [
               refresh_all:
@@ -160,20 +160,38 @@ defmodule Plausible.Application do
             ]
           )
         end,
-        warmed_cache(PlausibleWeb.TrackerScriptCache,
-          adapter_opts: [
-            n_lock_partitions: 1,
-            ttl_check_interval: false,
-            ets_options: [:bag, read_concurrency: true]
-          ],
-          warmers: [
-            refresh_all:
-              {PlausibleWeb.TrackerScriptCache.All,
-               interval: :timer.minutes(180) + Enum.random(1..:timer.seconds(10))},
-            refresh_updated_recently:
-              {PlausibleWeb.TrackerScriptCache.RecentlyUpdated, interval: :timer.seconds(30)}
-          ]
-        ),
+        on_ee do
+          warmed_cache(Plausible.Site.TrackerScriptIdCache,
+            adapter_opts: [
+              n_lock_partitions: 1,
+              ttl_check_interval: false,
+              ets_options: [read_concurrency: true]
+            ],
+            warmers: [
+              refresh_all:
+                {Plausible.Site.TrackerScriptIdCache.All,
+                 interval: :timer.minutes(180) + Enum.random(1..:timer.seconds(10))},
+              refresh_updated_recently:
+                {Plausible.Site.TrackerScriptIdCache.RecentlyUpdated,
+                 interval: :timer.seconds(30)}
+            ]
+          )
+        else
+          warmed_cache(Plausible.Site.TrackerScriptCache,
+            adapter_opts: [
+              n_lock_partitions: 1,
+              ttl_check_interval: false,
+              ets_options: [read_concurrency: true]
+            ],
+            warmers: [
+              refresh_all:
+                {Plausible.Site.TrackerScriptCache.All,
+                 interval: :timer.minutes(180) + Enum.random(1..:timer.seconds(10))},
+              refresh_updated_recently:
+                {Plausible.Site.TrackerScriptCache.RecentlyUpdated, interval: :timer.seconds(30)}
+            ]
+          )
+        end,
         Plausible.Ingestion.Counters,
         Plausible.Session.Salts,
         Supervisor.child_spec(Plausible.Event.WriteBuffer, id: Plausible.Event.WriteBuffer),
@@ -349,10 +367,12 @@ defmodule Plausible.Application do
   end
 
   defp setup_opentelemetry() do
-    OpentelemetryPhoenix.setup()
-    OpentelemetryEcto.setup([:plausible, :repo])
-    OpentelemetryEcto.setup([:plausible, :clickhouse_repo])
+    :opentelemetry_cowboy.setup()
+    OpentelemetryPhoenix.setup(adapter: :cowboy2)
+    OpentelemetryEcto.setup([:plausible, :repo], db_statement: :enabled)
+    OpentelemetryEcto.setup([:plausible, :clickhouse_repo], db_statement: :enabled)
     OpentelemetryOban.setup()
+    Plausible.OpenTelemetry.Logger.setup()
   end
 
   defp setup_geolocation do

@@ -1,9 +1,7 @@
 defmodule PlausibleWeb.Live.SitesTest do
   use PlausibleWeb.ConnCase, async: true
-  use Plausible.Teams.Test
 
   import Phoenix.LiveViewTest
-  import Plausible.Test.Support.HTML
 
   alias Plausible.Repo
 
@@ -14,10 +12,10 @@ defmodule PlausibleWeb.Live.SitesTest do
       {:ok, _lv, html} = live(conn, "/sites")
 
       text = text(html)
-      assert text =~ "My Personal Sites"
-      assert text =~ "You don't have any sites yet"
-      refute text =~ "You currently have no personal sites"
-      refute text =~ "Go to your team"
+
+      assert text =~ "My personal sites"
+      assert text =~ "Add your first personal site"
+      refute text =~ "Go to team sites"
     end
 
     test "renders team switcher link, if on personal sites with other teams available", %{
@@ -31,10 +29,10 @@ defmodule PlausibleWeb.Live.SitesTest do
       {:ok, _lv, html} = live(conn, "/sites")
       text = text(html)
 
-      assert text =~ "My Personal Sites"
+      assert text =~ "My personal sites"
       refute text =~ "You don't have any sites yet"
-      assert text =~ "You currently have no personal sites"
-      assert text =~ "Go to your team"
+      assert text =~ "Add your first personal site"
+      assert text =~ "Go to team sites"
     end
 
     test "renders settings link when current team is set", %{user: user, conn: conn} do
@@ -51,65 +49,6 @@ defmodule PlausibleWeb.Live.SitesTest do
       {:ok, _lv, html} = live(conn, "/sites")
 
       assert element_exists?(html, ~s|a[data-test-id="team-settings-link"]|)
-    end
-
-    test "renders team invitations", %{user: user, conn: conn} do
-      owner1 = new_user(name: "G.I. Joe")
-      new_site(owner: owner1)
-      team1 = team_of(owner1)
-
-      owner2 = new_user(name: "G.I. Jane")
-      new_site(owner: owner2)
-      team2 = team_of(owner2)
-
-      invitation1 = invite_member(team1, user, inviter: owner1, role: :viewer)
-      invitation2 = invite_member(team2, user, inviter: owner2, role: :editor)
-
-      {:ok, _lv, html} = live(conn, "/sites")
-
-      assert text_of_element(html, "#invitation-#{invitation1.invitation_id}") =~
-               "G.I. Joe has invited you to join the \"My Personal Sites\" as viewer member."
-
-      assert text_of_element(html, "#invitation-#{invitation2.invitation_id}") =~
-               "G.I. Jane has invited you to join the \"My Personal Sites\" as editor member."
-
-      assert element_exists?(
-               html,
-               ~s|#invitation-#{invitation1.invitation_id} a[href="#{Routes.invitation_path(PlausibleWeb.Endpoint, :accept_invitation, invitation1.invitation_id)}"]|
-             )
-
-      assert element_exists?(
-               html,
-               ~s|#invitation-#{invitation1.invitation_id} a[href="#{Routes.invitation_path(PlausibleWeb.Endpoint, :reject_invitation, invitation1.invitation_id)}"]|
-             )
-
-      assert element_exists?(
-               html,
-               ~s|#invitation-#{invitation2.invitation_id} a[href="#{Routes.invitation_path(PlausibleWeb.Endpoint, :accept_invitation, invitation2.invitation_id)}"]|
-             )
-
-      assert element_exists?(
-               html,
-               ~s|#invitation-#{invitation2.invitation_id} a[href="#{Routes.invitation_path(PlausibleWeb.Endpoint, :reject_invitation, invitation2.invitation_id)}"]|
-             )
-    end
-
-    @tag :ee_only
-    test "renders ownership transfer invitation for a case with no plan", %{
-      conn: conn,
-      user: user
-    } do
-      inviter = new_user()
-      site = new_site(owner: inviter)
-
-      transfer = invite_transfer(site, user, inviter: inviter)
-
-      {:ok, _lv, html} = live(conn, "/sites")
-
-      template = find_portal_template(html, "#invitation-modal-#{transfer.transfer_id}")
-
-      assert text(template) =~
-               "You are unable to accept the ownership of this site because your account does not have a subscription"
     end
 
     @tag :ee_only
@@ -129,27 +68,6 @@ defmodule PlausibleWeb.Live.SitesTest do
     end
 
     @tag :ee_only
-    test "renders upgrade nag when there's a pending transfer", %{
-      conn: conn,
-      user: user
-    } do
-      {:ok, personal_team} = Plausible.Teams.get_or_create(user)
-
-      another_user = new_user()
-      site = new_site(owner: another_user)
-
-      personal_team
-      |> Ecto.Changeset.change(trial_expiry_date: Date.add(Date.utc_today(), -1))
-      |> Repo.update!()
-
-      invite_transfer(site, user, inviter: another_user)
-
-      {:ok, _lv, html} = live(conn, "/sites")
-
-      assert html =~ "Payment required"
-    end
-
-    @tag :ee_only
     test "does not render upgrade nag when there's no current team", %{conn: conn, user: user} do
       team = new_site().team |> Plausible.Teams.complete_setup()
       add_member(team, user: user, role: :owner)
@@ -160,20 +78,7 @@ defmodule PlausibleWeb.Live.SitesTest do
     end
 
     @tag :ee_only
-    test "does not render upgrade nag when current team has no sites and user has no pending transfers",
-         %{conn: conn, user: user} do
-      {:ok, _personal_team} = Plausible.Teams.get_or_create(user)
-
-      team = new_site().team |> Plausible.Teams.complete_setup()
-      add_member(team, user: user, role: :owner)
-
-      {:ok, _lv, html} = live(conn, "/sites")
-
-      refute html =~ "Payment required"
-    end
-
-    @tag :ee_only
-    test "does not render upgrade nag if current team does not have any sites yet and user has no pending transfers",
+    test "does not render upgrade nag if current team does not have any sites yet",
          %{conn: conn, user: user} do
       {:ok, personal_team} = Plausible.Teams.get_or_create(user)
 
@@ -189,54 +94,14 @@ defmodule PlausibleWeb.Live.SitesTest do
       refute html =~ "Payment required"
     end
 
-    @tag :ee_only
-    test "renders ownership transfer invitation for a case with exceeded limits", %{
-      conn: conn,
-      user: user
-    } do
-      inviter = new_user()
-      site = new_site(owner: inviter)
-
-      transfer = invite_transfer(site, user, inviter: inviter)
-
-      # fill site quota
-      subscribe_to_growth_plan(user)
-      for _ <- 1..10, do: new_site(owner: user)
-
-      {:ok, _lv, html} = live(conn, "/sites")
-
-      template = find_portal_template(html, "#invitation-modal-#{transfer.transfer_id}")
-
-      assert text(template) =~ "Owning this site would exceed your site limit"
-    end
-
-    @tag :ee_only
-    test "renders ownership transfer invitation for a case with missing features", %{
-      conn: conn,
-      user: user
-    } do
-      inviter = new_user()
-      site = new_site(owner: inviter, allowed_event_props: ["dummy"])
-
-      transfer = invite_transfer(site, user, inviter: inviter)
-
-      subscribe_to_growth_plan(user)
-
-      {:ok, _lv, html} = live(conn, "/sites")
-
-      template = find_portal_template(html, "#invitation-modal-#{transfer.transfer_id}")
-
-      assert text(template) =~
-               "The site uses Custom Properties, which your current subscription does not support"
-    end
-
     test "renders 24h visitors correctly", %{conn: conn, user: user} do
       site = new_site(owner: user)
 
       populate_stats(site, [build(:pageview), build(:pageview), build(:pageview)])
 
-      {:ok, _lv, html} = live(conn, "/sites")
+      {:ok, lv, _html} = live(conn, "/sites")
 
+      html = render(lv)
       site_card = text_of_element(html, "li[data-domain=\"#{site.domain}\"]")
       assert site_card =~ "3 visitors in last 24h"
       assert site_card =~ site.domain
@@ -283,14 +148,10 @@ defmodule PlausibleWeb.Live.SitesTest do
 
   on_ee do
     describe "consolidated views appearance" do
-      setup %{user: user} do
-        # this is temporary, instead of feature flag we'll only show consolidated views to super admins
-        patch_env(:super_admin_user_ids, [user.id])
-      end
-
       test "consolidated view shows up", %{conn: conn, user: user} do
         new_site(owner: user)
-        team = team_of(user)
+        new_site(owner: user)
+        team = user |> team_of()
 
         conn = set_current_team(conn, team)
 
@@ -298,7 +159,8 @@ defmodule PlausibleWeb.Live.SitesTest do
 
         refute element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
 
-        new_consolidated_view(team)
+        team = Plausible.Teams.complete_setup(team)
+        conn = set_current_team(conn, team)
 
         {:ok, _lv, html} = live(conn, "/sites")
 
@@ -321,11 +183,9 @@ defmodule PlausibleWeb.Live.SitesTest do
           build(:pageview, user_id: 3)
         ])
 
-        team = team_of(user)
+        team = user |> team_of() |> Plausible.Teams.complete_setup()
 
         conn = set_current_team(conn, team)
-
-        new_consolidated_view(team)
 
         {:ok, _lv, html} = live(conn, "/sites")
 
@@ -336,25 +196,378 @@ defmodule PlausibleWeb.Live.SitesTest do
         assert stats =~ "Views per visit 1.33"
       end
 
-      test "consolidated view does not show up for non-superadmin (temp)", %{conn: conn} do
-        user = new_user()
+      test "consolidated view disappears when trial ends - CTA is shown instead", %{
+        conn: conn,
+        user: user
+      } do
         new_site(owner: user)
-        team = team_of(user)
+        new_site(owner: user)
+        team = user |> team_of() |> Plausible.Teams.complete_setup()
 
         conn = set_current_team(conn, team)
 
         {:ok, _lv, html} = live(conn, "/sites")
 
-        refute element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-card-cta"]|)
+        assert element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
 
-        new_consolidated_view(team)
+        team |> Plausible.Teams.Team.end_trial() |> Plausible.Repo.update!()
 
         {:ok, _lv, html} = live(conn, "/sites")
 
         refute element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
-        refute element_exists?(html, ~s|[data-test-id="consolidated-view-stats-loaded"]|)
-        refute element_exists?(html, ~s|[data-test-id="consolidated-view-chart-loaded"]|)
+        assert element_exists?(html, ~s|[data-test-id="consolidated-view-card-cta"]|)
+
+        assert text_of_element(html, ~s|[data-test-id="consolidated-view-card-cta"]|) =~
+                 "Upgrade to the Business plan to enable consolidated view."
+
+        assert element_exists?(
+                 html,
+                 ~s|[data-test-id="consolidated-view-card-cta"] a[href$="/billing/choose-plan"]|
+               )
       end
+
+      test "CTA for insufficient custom plans", %{conn: conn, user: user} do
+        user
+        |> subscribe_to_enterprise_plan(features: [Plausible.Billing.Feature.Goals])
+        |> team_of()
+
+        new_site(owner: user)
+        new_site(owner: user)
+
+        {:ok, _lv, html} = live(conn, "/sites")
+
+        assert element_exists?(html, ~s|[data-test-id="consolidated-view-card-cta"]|)
+
+        assert text_of_element(html, ~s|[data-test-id="consolidated-view-card-cta"]|) =~
+                 "Your plan does not include consolidated view. Contact us to discuss an upgrade."
+      end
+
+      test "a team that hasn't been set up shows different CTA", %{
+        conn: conn,
+        user: user
+      } do
+        new_site(owner: user)
+        new_site(owner: user)
+
+        {:ok, _lv, html} = live(conn, "/sites")
+
+        assert element_exists?(html, ~s|[data-test-id="consolidated-view-card-cta"]|)
+
+        assert text_of_element(html, ~s|[data-test-id="consolidated-view-card-cta"]|) =~
+                 "To create a consolidated view, you'll need to set up a team."
+      end
+
+      test "single site won't show neither CTA or view - team not setup", %{
+        conn: conn,
+        user: user
+      } do
+        new_site(owner: user)
+
+        {:ok, _lv, html} = live(conn, "/sites")
+
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-card-cta"]|)
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
+      end
+
+      test "single site won't show neither CTA or view - team setup", %{
+        conn: conn,
+        user: user
+      } do
+        new_site(owner: user)
+
+        user |> team_of() |> Plausible.Teams.complete_setup()
+
+        {:ok, _lv, html} = live(conn, "/sites")
+
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-card-cta"]|)
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
+      end
+
+      test "CTA advertises contacting team owner to viewers", %{
+        conn: conn,
+        user: user
+      } do
+        new_site(owner: user)
+        new_site(owner: user)
+
+        subscribe_to_growth_plan(user)
+
+        team = user |> team_of() |> Plausible.Teams.complete_setup()
+
+        viewer = add_member(team, role: :viewer)
+
+        {:ok, conn: conn} = log_in(%{user: viewer, conn: conn})
+
+        {:ok, _lv, html} = live(conn, "/sites?__team=#{team.identifier}")
+
+        assert element_exists?(html, ~s|[data-test-id="consolidated-view-card-cta"]|)
+
+        assert text_of_element(html, ~s|[data-test-id="consolidated-view-card-cta"]|) =~
+                 "Available on Business plans. Contact your team owner to create it."
+
+        refute element_exists?(
+                 html,
+                 ~s|[data-test-id="consolidated-view-card-cta"] a[href="/billing/choose-plan"]|
+               )
+      end
+
+      test "CTA can be permanently dismissed, in which case dropdown option to restore it shows up",
+           %{conn: conn, user: user} do
+        new_site(owner: user)
+        new_site(owner: user)
+
+        dismiss_selector = ~s|[phx-click="consolidated-view-cta-dismiss"]|
+        cta_selector = ~s|[data-test-id="consolidated-view-card-cta"]|
+        restore_selector = ~s|[phx-click="consolidated-view-cta-restore"]|
+
+        subscribe_to_growth_plan(user)
+
+        {:ok, lv, html} = live(conn, "/sites")
+
+        assert element_exists?(html, cta_selector)
+        refute element_exists?(html, restore_selector)
+
+        lv
+        |> element(dismiss_selector)
+        |> render_click()
+
+        html = render(lv)
+
+        refute element_exists?(html, cta_selector)
+        assert element_exists?(html, restore_selector)
+
+        {:ok, _lv, html} = live(conn, "/sites")
+        refute element_exists?(html, cta_selector)
+
+        lv
+        |> element(restore_selector)
+        |> render_click()
+
+        html = render(lv)
+        assert element_exists?(html, cta_selector)
+      end
+
+      test "consolidated view card disappears when searching", %{conn: conn, user: user} do
+        new_site(owner: user)
+        new_site(owner: user)
+
+        team = user |> team_of() |> Plausible.Teams.complete_setup()
+        conn = set_current_team(conn, team)
+
+        {:ok, lv, html} = live(conn, "/sites")
+
+        assert element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
+
+        type_into_input(lv, "filter-text", "a")
+
+        html = render(lv)
+
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-card"]|)
+      end
+
+      test "CTA card disappears when searching", %{conn: conn, user: user} do
+        new_site(owner: user)
+        new_site(owner: user)
+
+        {:ok, lv, html} = live(conn, "/sites")
+
+        assert element_exists?(html, ~s|[data-test-id="consolidated-view-card-cta"]|)
+
+        type_into_input(lv, "filter-text", "a")
+
+        html = render(lv)
+
+        refute element_exists?(html, ~s|[data-test-id="consolidated-view-card-cta"]|)
+      end
+    end
+  end
+
+  describe "invitation notices" do
+    test "renders team invitation notice", %{conn: conn, user: user} do
+      inviter = new_user(name: "Jane Doe")
+      _site = new_site(owner: inviter)
+      team = team_of(inviter)
+
+      inv = invite_member(team, user, inviter: inviter, role: :admin)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      notice = text_of_element(html, "#invitation-#{inv.invitation_id}")
+      assert notice =~ "Jane Doe"
+      assert notice =~ team.name
+      assert notice =~ "admin"
+
+      assert element_exists?(
+               html,
+               ~s|#invitation-#{inv.invitation_id} a[href$="#{inv.invitation_id}/accept"]|
+             )
+
+      assert element_exists?(
+               html,
+               ~s|#invitation-#{inv.invitation_id} a[href$="#{inv.invitation_id}/reject"]|
+             )
+    end
+
+    test "renders multiple team invitation notices", %{conn: conn, user: user} do
+      inviter1 = new_user(name: "Alice")
+      inviter2 = new_user(name: "Bob")
+      _site1 = new_site(owner: inviter1)
+      _site2 = new_site(owner: inviter2)
+      team1 = team_of(inviter1)
+      team2 = team_of(inviter2)
+
+      inv1 = invite_member(team1, user, inviter: inviter1, role: :viewer)
+      inv2 = invite_member(team2, user, inviter: inviter2, role: :editor)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      assert element_exists?(html, "#invitation-#{inv1.invitation_id}")
+      assert element_exists?(html, "#invitation-#{inv2.invitation_id}")
+    end
+
+    test "renders guest invitation notice", %{conn: conn, user: user} do
+      inviter = new_user(name: "John Smith")
+      site = new_site(owner: inviter)
+
+      inv = invite_guest(site, user, inviter: inviter, role: :viewer)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      notice = text_of_element(html, "#site-invitation-#{inv.invitation_id}")
+      assert notice =~ "John Smith"
+      assert notice =~ site.domain
+      assert notice =~ "viewer"
+
+      assert element_exists?(
+               html,
+               ~s|#site-invitation-#{inv.invitation_id} a[href$="#{inv.invitation_id}/accept"]|
+             )
+
+      assert element_exists?(
+               html,
+               ~s|#site-invitation-#{inv.invitation_id} a[href$="#{inv.invitation_id}/reject"]|
+             )
+    end
+
+    @tag :ee_only
+    test "renders site transfer invitation notice", %{conn: conn, user: user} do
+      inviter = new_user(name: "Carol White")
+      site = new_site(owner: inviter)
+
+      subscribe_to_growth_plan(user)
+      transfer = invite_transfer(site, user, inviter: inviter)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      notice = text_of_element(html, "#site-ownership-invitation-#{transfer.transfer_id}")
+      assert notice =~ "Carol White"
+      assert notice =~ site.domain
+
+      assert element_exists?(
+               html,
+               ~s|#site-ownership-invitation-#{transfer.transfer_id} a[href$="#{transfer.transfer_id}/accept"]|
+             )
+
+      assert element_exists?(
+               html,
+               ~s|#site-ownership-invitation-#{transfer.transfer_id} a[href$="#{transfer.transfer_id}/reject"]|
+             )
+    end
+
+    @tag :ee_only
+    test "renders upgrade CTA instead of accept for site transfer when no plan", %{
+      conn: conn,
+      user: user
+    } do
+      inviter = new_user()
+      site = new_site(owner: inviter)
+
+      transfer = invite_transfer(site, user, inviter: inviter)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      notice = text_of_element(html, "#site-ownership-invitation-#{transfer.transfer_id}")
+      assert notice =~ "You don't have an active subscription"
+
+      assert element_exists?(
+               html,
+               ~s|#site-ownership-invitation-#{transfer.transfer_id} a[href$="/billing/choose-plan"]|
+             )
+
+      refute element_exists?(
+               html,
+               ~s|#site-ownership-invitation-#{transfer.transfer_id} a[href$="#{transfer.transfer_id}/accept"]|
+             )
+    end
+
+    @tag :ee_only
+    test "renders upgrade CTA instead of accept for site transfer when plan limits exceeded", %{
+      conn: conn,
+      user: user
+    } do
+      inviter = new_user()
+      site = new_site(owner: inviter)
+
+      transfer = invite_transfer(site, user, inviter: inviter)
+
+      subscribe_to_growth_plan(user)
+      for _ <- 1..10, do: new_site(owner: user)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      notice = text_of_element(html, "#site-ownership-invitation-#{transfer.transfer_id}")
+      assert notice =~ "site limit"
+
+      assert element_exists?(
+               html,
+               ~s|#site-ownership-invitation-#{transfer.transfer_id} a[href$="/billing/choose-plan"]|
+             )
+
+      refute element_exists?(
+               html,
+               ~s|#site-ownership-invitation-#{transfer.transfer_id} a[href$="#{transfer.transfer_id}/accept"]|
+             )
+    end
+
+    test "shows invitations on page 1 (explicit) and with no page parameter, hides on page 2+",
+         %{conn: conn, user: user} do
+      for _ <- 1..3, do: new_site(owner: user)
+
+      inviter = new_user()
+      _site = new_site(owner: inviter)
+      inv = invite_member(team_of(inviter), user, inviter: inviter, role: :admin)
+
+      {:ok, _lv, html} = live(conn, "/sites?page_size=2")
+      assert element_exists?(html, "#invitation-#{inv.invitation_id}")
+
+      {:ok, _lv, html} = live(conn, "/sites?page_size=2&page=1")
+      assert element_exists?(html, "#invitation-#{inv.invitation_id}")
+
+      {:ok, _lv, html} = live(conn, "/sites?page_size=2&page=2")
+      refute element_exists?(html, "#invitation-#{inv.invitation_id}")
+    end
+
+    test "does not render notices for other users' invitations", %{conn: conn} do
+      other_user = new_user()
+
+      team_inviter = new_user()
+      _site = new_site(owner: team_inviter)
+      inv = invite_member(team_of(team_inviter), other_user, inviter: team_inviter, role: :admin)
+
+      guest_inviter = new_user()
+      guest_site = new_site(owner: guest_inviter)
+      gi = invite_guest(guest_site, other_user, inviter: guest_inviter, role: :viewer)
+
+      transfer_inviter = new_user()
+      transfer_site = new_site(owner: transfer_inviter)
+      transfer = invite_transfer(transfer_site, other_user, inviter: transfer_inviter)
+
+      {:ok, _lv, html} = live(conn, "/sites")
+
+      refute element_exists?(html, "#invitation-#{inv.invitation_id}")
+      refute element_exists?(html, "#site-invitation-#{gi.invitation_id}")
+      refute element_exists?(html, "#site-ownership-invitation-#{transfer.transfer_id}")
     end
   end
 
@@ -366,7 +579,7 @@ defmodule PlausibleWeb.Live.SitesTest do
 
       assert text_of_element(
                html,
-               ~s/li[data-domain="#{site.domain}"] a[phx-value-domain]/
+               ~s/li[data-domain="#{site.domain}"] button[phx-value-domain]/
              ) == "Pin site"
     end
 
@@ -375,7 +588,7 @@ defmodule PlausibleWeb.Live.SitesTest do
 
       {:ok, lv, _html} = live(conn, "/sites")
 
-      button_selector = ~s/li[data-domain="#{site.domain}"] a[phx-value-domain]/
+      button_selector = ~s/li[data-domain="#{site.domain}"] button[phx-value-domain]/
 
       html =
         lv
@@ -406,7 +619,7 @@ defmodule PlausibleWeb.Live.SitesTest do
 
       {:ok, lv, _html} = live(conn, "/sites")
 
-      button_selector = ~s/li[data-domain="#{site.domain}"] a[phx-value-domain]/
+      button_selector = ~s/li[data-domain="#{site.domain}"] button[phx-value-domain]/
 
       html =
         lv

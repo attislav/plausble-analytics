@@ -2,7 +2,6 @@ defmodule PlausibleWeb.Live.Shields.CountriesTest do
   use PlausibleWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
-  import Plausible.Test.Support.HTML
 
   alias Plausible.Shields
 
@@ -13,7 +12,7 @@ defmodule PlausibleWeb.Live.Shields.CountriesTest do
       conn = get(conn, "/#{site.domain}/settings/shields/countries")
       resp = html_response(conn, 200)
 
-      assert resp =~ "No country rules configured for this site"
+      assert resp =~ "Block a country"
       assert resp =~ "Country block list"
     end
 
@@ -37,6 +36,17 @@ defmodule PlausibleWeb.Live.Shields.CountriesTest do
       assert text_of_attr(remove_button_1, "phx-value-rule-id") == r1.id
       assert text_of_attr(remove_button_2, "phx-click") == "remove-country-rule"
       assert text_of_attr(remove_button_2, "phx-value-rule-id") == r2.id
+    end
+
+    test "lists Unknown country rule", %{conn: conn, site: site} do
+      {:ok, rule} =
+        Shields.add_country_rule(site, %{"country_code" => "ZZ"})
+
+      conn = get(conn, "/#{site.domain}/settings/shields/countries")
+      resp = html_response(conn, 200)
+
+      assert resp =~ "Unknown"
+      assert find(resp, "#remove-country-rule-#{rule.id}")
     end
 
     test "add rule button is rendered", %{conn: conn, site: site} do
@@ -104,6 +114,22 @@ defmodule PlausibleWeb.Live.Shields.CountriesTest do
       tooltip = text_of_attr(html, "#country-#{id}", "title")
       assert tooltip =~ "Added at #{Date.utc_today()}"
       assert tooltip =~ "by #{added_by}"
+    end
+
+    test "submitting Unknown (ZZ) country saves it", %{conn: conn, site: site} do
+      lv = get_liveview(conn, site)
+
+      lv
+      |> element("form")
+      |> render_submit(%{
+        "country_rule[country_code]" => "ZZ"
+      })
+
+      html = render(lv)
+
+      assert html =~ "Unknown"
+
+      assert [%{country_code: "ZZ"}] = Shields.list_country_rules(site)
     end
 
     test "clicking Remove deletes the rule", %{conn: conn, site: site} do

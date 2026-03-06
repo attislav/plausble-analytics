@@ -16,7 +16,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController do
 
     with :ok <- validate_period(params),
          :ok <- validate_date(params),
-         query <- Query.from(site, params, debug_metadata(conn)),
+         query <- Query.from(site, params, debug_metadata: debug_metadata(conn)),
          :ok <- validate_filters(site, query.filters),
          {:ok, metrics} <- parse_and_validate_metrics(params, query),
          :ok <- ensure_custom_props_access(site, query) do
@@ -36,7 +36,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController do
     with :ok <- validate_period(params),
          :ok <- validate_date(params),
          :ok <- validate_property(params),
-         query <- Query.from(site, params, debug_metadata(conn)),
+         query <- Query.from(site, params, debug_metadata: debug_metadata(conn)),
          :ok <- validate_filters(site, query.filters),
          {:ok, metrics} <- parse_and_validate_metrics(params, query),
          {:ok, limit} <- validate_or_default_limit(params),
@@ -253,7 +253,7 @@ defmodule PlausibleWeb.Api.ExternalStatsController do
     with :ok <- validate_period(params),
          :ok <- validate_date(params),
          :ok <- validate_interval(params),
-         query <- Query.from(site, params, debug_metadata(conn)),
+         query <- Query.from(site, params, debug_metadata: debug_metadata(conn)),
          :ok <- validate_filters(site, query.filters),
          {:ok, metrics} <- parse_and_validate_metrics(params, query),
          :ok <- ensure_custom_props_access(site, query) do
@@ -336,9 +336,12 @@ defmodule PlausibleWeb.Api.ExternalStatsController do
   end
 
   defp validate_filter(site, [_type, "event:goal", goal_filter | _rest]) do
+    site = Plausible.Repo.preload(site, :team)
+    props_available? = Plausible.Billing.Feature.Props.check_availability(site.team) == :ok
+
     configured_goals =
       site
-      |> Plausible.Goals.for_site()
+      |> Plausible.Goals.for_site(include_goals_with_custom_props?: props_available?)
       |> Enum.map(& &1.display_name)
 
     goals_in_filter = List.wrap(goal_filter)

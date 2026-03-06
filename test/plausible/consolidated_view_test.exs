@@ -1,24 +1,72 @@
 defmodule Plausible.ConsolidatedViewTest do
-  use Plausible
+  use Plausible.DataCase, async: true
 
   on_ee do
-    use Plausible.DataCase, async: true
     import Ecto.Query
-    import Plausible.Teams.Test
+
     alias Plausible.ConsolidatedView
     alias Plausible.Teams
+
+    describe "cta state" do
+      setup [:create_user, :create_team]
+
+      test "by default CTA should be shown", %{user: user, team: team} do
+        assert ConsolidatedView.cta_dismissed?(user, team) == false
+      end
+
+      test "CTA dismissed and restored", %{user: user, team: team} do
+        assert :ok = ConsolidatedView.dismiss_cta(user, team)
+        assert ConsolidatedView.cta_dismissed?(user, team) == true
+
+        assert :ok = ConsolidatedView.restore_cta(user, team)
+        assert ConsolidatedView.cta_dismissed?(user, team) == false
+      end
+    end
+
+    describe "ok_to_display?/1" do
+      setup [:create_user, :create_team]
+
+      test "returns false when team is nil" do
+        refute ConsolidatedView.ok_to_display?(nil)
+      end
+
+      test "returns false when consolidated view is not enabled", %{team: team} do
+        ConsolidatedView.disable(team)
+        refute ConsolidatedView.ok_to_display?(team)
+      end
+
+      test "returns false when there are no sites to consolidate", %{team: team} do
+        new_site(team: team)
+        site = new_site(team: team)
+        team = Teams.complete_setup(team)
+        {:ok, _} = ConsolidatedView.enable(team)
+        Plausible.Repo.delete(site)
+        refute ConsolidatedView.ok_to_display?(team)
+      end
+
+      test "returns true when all conditions are met", %{team: team} do
+        new_site(team: team)
+        new_site(team: team)
+        team = Teams.complete_setup(team)
+        {:ok, _} = ConsolidatedView.enable(team)
+
+        assert ConsolidatedView.ok_to_display?(team)
+      end
+    end
 
     describe "enable/1 and enabled?/1" do
       setup [:create_user, :create_team]
 
       test "creates and persists a new consolidated site instance", %{team: team} do
         new_site(team: team)
+        new_site(team: team)
         team = Teams.complete_setup(team)
         assert {:ok, %Plausible.Site{consolidated: true}} = ConsolidatedView.enable(team)
-        assert ConsolidatedView.enabled?(team)
+        assert ConsolidatedView.get(team)
       end
 
       test "is idempotent", %{team: team} do
+        new_site(team: team)
         new_site(team: team)
         team = Teams.complete_setup(team)
         assert {:ok, s1} = ConsolidatedView.enable(team)
@@ -31,15 +79,61 @@ defmodule Plausible.ConsolidatedViewTest do
         assert s1.domain == s2.domain
       end
 
+      test "returns {:error, :upgrade_required} before :team_not_setup", %{team: team} do
+        # we want to ask the user to upgrade first, before making them create a team they might not need
+        new_site(team: team)
+        new_site(team: team)
+
+        team =
+          team
+          |> Plausible.Teams.Team.end_trial()
+          |> Plausible.Repo.update!()
+
+        assert {:error, :upgrade_required} = ConsolidatedView.enable(team)
+      end
+
+      test "returns {:error, :contact_us} when on insufficient custom plan", %{user: user} do
+        team =
+          user
+          |> subscribe_to_enterprise_plan(features: [Plausible.Billing.Feature.Goals])
+          |> team_of()
+
+        new_site(team: team)
+        new_site(team: team)
+
+        assert ConsolidatedView.enable(team) == {:error, :contact_us}
+      end
+
+      test "returns {:error, :upgrade_required} for ineligible subscription", %{
+        team: team,
+        user: user
+      } do
+        subscribe_to_growth_plan(user)
+        new_site(team: team)
+        new_site(team: team)
+        team = Teams.complete_setup(team)
+
+        assert ConsolidatedView.enable(team) == {:error, :upgrade_required}
+      end
+
       test "returns {:error, :no_sites} when the team does not have any sites", %{team: team} do
         team = Teams.complete_setup(team)
         assert {:error, :no_sites} = ConsolidatedView.enable(team)
-        refute ConsolidatedView.enabled?(team)
+        refute ConsolidatedView.get(team)
       end
 
-      test "returns {:error, :team_not_setup} when the team is not set up", %{team: team} do
+      test "returns {:error, :team_not_setup} when the team has sites but isn't setup", %{
+        team: team
+      } do
+        new_site(team: team)
+        new_site(team: team)
         assert {:error, :team_not_setup} = ConsolidatedView.enable(team)
-        refute ConsolidatedView.enabled?(team)
+        refute ConsolidatedView.get(team)
+      end
+
+      test "returns {:error, :no_sites} when the team is not set up", %{team: team} do
+        assert {:error, :no_sites} = ConsolidatedView.enable(team)
+        refute ConsolidatedView.get(team)
       end
 
       @tag :skip
@@ -66,14 +160,17 @@ defmodule Plausible.ConsolidatedViewTest do
       test "enable/1 updates cache", %{team: team} do
         team = Teams.complete_setup(team)
         site = new_site(team: team)
+        new_site(team: team)
         {:ok, _} = ConsolidatedView.enable(team)
 
         assert eventually(fn ->
-                 {ConsolidatedView.Cache.get(team.identifier) == [site.id], :ok}
+                 site_ids = ConsolidatedView.Cache.get(team.identifier)
+                 {is_list(site_ids) and length(site_ids) == 2 and site.id in site_ids, :ok}
                end)
       end
 
       test "sets Etc/UTC by default", %{team: team} do
+        new_site(team: team)
         new_site(team: team)
         team = Teams.complete_setup(team)
 
@@ -82,6 +179,7 @@ defmodule Plausible.ConsolidatedViewTest do
       end
 
       test "sets Etc/UTC for UTC sites", %{team: team} do
+        new_site(team: team, timezone: "UTC")
         new_site(team: team, timezone: "UTC")
         team = Teams.complete_setup(team)
 
@@ -106,6 +204,7 @@ defmodule Plausible.ConsolidatedViewTest do
       setup [:create_user, :create_team, :create_site]
 
       setup %{team: team} do
+        new_site(team: team)
         new_consolidated_view(team)
         :ok
       end
@@ -169,8 +268,11 @@ defmodule Plausible.ConsolidatedViewTest do
         team: team,
         site: site
       } do
+        new_site(team: team)
         new_consolidated_view(team)
-        assert ConsolidatedView.site_ids(team) == {:ok, [site.id]}
+        assert {:ok, site_ids} = ConsolidatedView.site_ids(team)
+        assert length(site_ids) == 2
+        assert site.id in site_ids
       end
     end
 
@@ -179,12 +281,14 @@ defmodule Plausible.ConsolidatedViewTest do
 
       test "can get by team", %{team: team} do
         assert is_nil(ConsolidatedView.get(team))
+        new_site(team: team)
         new_consolidated_view(team)
         assert %Plausible.Site{} = ConsolidatedView.get(team)
       end
 
       test "can get by team.identifier", %{team: team} do
         assert is_nil(ConsolidatedView.get(team.identifier))
+        new_site(team: team)
         new_consolidated_view(team)
         assert %Plausible.Site{} = ConsolidatedView.get(team.identifier)
       end
@@ -196,7 +300,7 @@ defmodule Plausible.ConsolidatedViewTest do
 
       test "no-op if disabled", %{team: team} do
         :ok = ConsolidatedView.reset_if_enabled(team)
-        refute ConsolidatedView.enabled?(team)
+        refute ConsolidatedView.get(team)
         refute ConsolidatedView.get(team)
       end
 
@@ -207,6 +311,13 @@ defmodule Plausible.ConsolidatedViewTest do
             team: team,
             native_stats_start_at: ~N[2024-01-01 12:00:00],
             timezone: "Europe/Warsaw"
+          )
+
+        _site =
+          new_site(
+            team: team,
+            native_stats_start_at: ~N[2024-01-01 12:00:00],
+            timezone: "Europe/Tiraspol"
           )
 
         team = Teams.complete_setup(team)
@@ -223,7 +334,7 @@ defmodule Plausible.ConsolidatedViewTest do
         Process.sleep(1_000)
 
         :ok = ConsolidatedView.reset_if_enabled(team)
-        assert ConsolidatedView.enabled?(team)
+        assert ConsolidatedView.get(team)
 
         consolidated_view = ConsolidatedView.get(team)
         assert consolidated_view.native_stats_start_at == another_site.native_stats_start_at

@@ -1,6 +1,5 @@
 defmodule PlausibleWeb.Api.StatsController.TopStatsTest do
   use PlausibleWeb.ConnCase
-  use Plausible.Teams.Test
 
   @user_id Enum.random(1000..9999)
 
@@ -657,10 +656,11 @@ defmodule PlausibleWeb.Api.StatsController.TopStatsTest do
              ]
     end
 
-    test ":is filter on page returns only visitors, visits, pageviews and scroll_depth", %{
-      conn: conn,
-      site: site
-    } do
+    test ":is filter on page returns visitors, visits, pageviews bounce_rate, time_on_page and scroll_depth",
+         %{
+           conn: conn,
+           site: site
+         } do
       site_import =
         insert(:site_import, site: site, start_date: ~D[2021-01-01], has_scroll_depth: true)
 
@@ -696,6 +696,7 @@ defmodule PlausibleWeb.Api.StatsController.TopStatsTest do
                %{"name" => "Unique visitors", "value" => 2, "graph_metric" => "visitors"},
                %{"name" => "Total visits", "value" => 4, "graph_metric" => "visits"},
                %{"name" => "Total pageviews", "value" => 36, "graph_metric" => "pageviews"},
+               %{"name" => "Bounce rate", "value" => 0, "graph_metric" => "bounce_rate"},
                %{"name" => "Scroll depth", "value" => nil, "graph_metric" => "scroll_depth"}
              ]
     end
@@ -1280,7 +1281,11 @@ defmodule PlausibleWeb.Api.StatsController.TopStatsTest do
       populate_stats(site, [
         build(:pageview, pathname: "/index", hostname: "example.com"),
         build(:pageview, pathname: "/index", hostname: "example.com", user_id: @user_id),
-        build(:pageview, pathname: "/blog/post1", hostname: "blog.example.com", user_id: @user_id),
+        build(:pageview,
+          pathname: "/blog/post1",
+          hostname: "blog.example.com",
+          user_id: @user_id
+        ),
         build(:pageview, pathname: "/blog/post2", hostname: "blog.example.com")
       ])
 
@@ -1307,8 +1312,16 @@ defmodule PlausibleWeb.Api.StatsController.TopStatsTest do
       populate_stats(site, [
         build(:pageview, pathname: "/index", hostname: "example.com"),
         build(:pageview, pathname: "/index", hostname: "example.com", user_id: @user_id),
-        build(:pageview, pathname: "/blog/post1", hostname: "blog.example.com", user_id: @user_id),
-        build(:pageview, pathname: "/blog/post2", hostname: "blog.example.com", user_id: @user_id),
+        build(:pageview,
+          pathname: "/blog/post1",
+          hostname: "blog.example.com",
+          user_id: @user_id
+        ),
+        build(:pageview,
+          pathname: "/blog/post2",
+          hostname: "blog.example.com",
+          user_id: @user_id
+        ),
         build(:pageview, pathname: "/blog/post2", hostname: "blog.example.com"),
         build(:pageview, pathname: "/blog/post2", hostname: "about.example.com")
       ])
@@ -1337,8 +1350,16 @@ defmodule PlausibleWeb.Api.StatsController.TopStatsTest do
       populate_stats(site, [
         build(:pageview, pathname: "/index", hostname: "example.com"),
         build(:pageview, pathname: "/index", hostname: "example.com", user_id: @user_id),
-        build(:pageview, pathname: "/blog/post1", hostname: "blog.example.com", user_id: @user_id),
-        build(:pageview, pathname: "/blog/post2", hostname: "blog.example.com", user_id: @user_id),
+        build(:pageview,
+          pathname: "/blog/post1",
+          hostname: "blog.example.com",
+          user_id: @user_id
+        ),
+        build(:pageview,
+          pathname: "/blog/post2",
+          hostname: "blog.example.com",
+          user_id: @user_id
+        ),
         build(:pageview, pathname: "/blog/post3", hostname: "blog.example.com"),
         build(:pageview,
           pathname: "/blog/post2",

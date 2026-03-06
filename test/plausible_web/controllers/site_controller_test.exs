@@ -3,11 +3,9 @@ defmodule PlausibleWeb.SiteControllerTest do
   use Plausible.Repo
   use Bamboo.Test
   use Oban.Testing, repo: Plausible.Repo
-  use Plausible.Teams.Test
 
   import ExUnit.CaptureLog
   import Mox
-  import Plausible.Test.Support.HTML
 
   alias Plausible.Imported.SiteImport
   alias Plausible.Teams
@@ -57,9 +55,77 @@ defmodule PlausibleWeb.SiteControllerTest do
   describe "GET /sites" do
     setup [:create_user, :log_in]
 
-    test "shows empty screen if no sites", %{conn: conn} do
+    test "shows personal sites empty state when there are no sites at all", %{conn: conn} do
       conn = get(conn, "/sites")
-      assert html_response(conn, 200) =~ "You don't have any sites yet"
+      resp = html_response(conn, 200)
+
+      assert resp =~ "Add your first personal site"
+      assert resp =~ "Collect simple, privacy-friendly stats to better understand your audience."
+      refute resp =~ "Go to team sites"
+    end
+
+    test "shows team sites empty state when team is setup and there are no sites at all", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, team} = Teams.get_or_create(user)
+      team = Teams.complete_setup(team)
+      conn = set_current_team(conn, team)
+
+      conn = get(conn, "/sites")
+      resp = html_response(conn, 200)
+
+      assert resp =~ "Add your first team site"
+      assert resp =~ "Collect simple, privacy-friendly stats to better understand your audience."
+      refute resp =~ "Go to team sites"
+    end
+
+    test "shows team sites empty state when team is setup but has no team sites, and user has personal sites",
+         %{conn: conn, user: user} do
+      _personal_site = new_site(owner: user)
+
+      other_user = new_user()
+      {:ok, other_team} = Teams.get_or_create(other_user)
+      other_team = Teams.complete_setup(other_team)
+      add_member(other_team, user: user, role: :admin)
+      conn = set_current_team(conn, other_team)
+
+      conn = get(conn, "/sites")
+      resp = html_response(conn, 200)
+
+      assert resp =~ "Add your first team site"
+      assert resp =~ "Collect simple, privacy-friendly stats to better understand your audience."
+      refute resp =~ "Go to team sites"
+    end
+
+    test "shows personal sites empty state when there are team sites but no personal sites", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, team} = Teams.get_or_create(user)
+      team = Teams.complete_setup(team)
+      _team_site = new_site(team: team)
+
+      conn = get(conn, "/sites")
+      resp = html_response(conn, 200)
+
+      assert resp =~ "Add your first personal site"
+      assert resp =~ "Collect simple, privacy-friendly stats to better understand your audience."
+      assert resp =~ "Go to team sites"
+    end
+
+    test "shows empty search state when filter returns no results but there are sites", %{
+      conn: conn,
+      user: user
+    } do
+      _site = new_site(domain: "example.com", owner: user)
+
+      conn = get(conn, "/sites", filter_text: "nonexistent")
+      resp = html_response(conn, 200)
+
+      assert resp =~ "No sites found. Try a different search term."
+      refute resp =~ "Add your first"
+      refute resp =~ "Go to team sites"
     end
 
     test "lists all of your sites with last 24h visitors (defaulting to 0 on first mount)", %{
@@ -78,25 +144,6 @@ defmodule PlausibleWeb.SiteControllerTest do
 
       refute site_card =~ "0 visitors"
       assert site_card =~ site.domain
-    end
-
-    test "shows invitations for user by email address", %{conn: conn, user: user} do
-      inviter = new_user()
-      site = new_site(owner: inviter)
-      invite_guest(site, user, inviter: inviter, role: :editor)
-      conn = get(conn, "/sites")
-
-      assert html_response(conn, 200) =~ site.domain
-    end
-
-    test "invitations are case insensitive", %{conn: conn, user: user} do
-      inviter = new_user()
-      site = new_site(owner: inviter)
-      invite_guest(site, String.upcase(user.email), inviter: inviter, role: :editor)
-
-      conn = get(conn, "/sites")
-
-      assert html_response(conn, 200) =~ site.domain
     end
 
     test "paginates sites", %{conn: initial_conn, user: user} do
@@ -168,21 +215,21 @@ defmodule PlausibleWeb.SiteControllerTest do
     end
 
     test "filters by domain", %{conn: conn, user: user} do
-      _site1 = new_site(domain: "first.example.com", owner: user)
-      _site2 = new_site(domain: "second.example.com", owner: user)
+      _site1 = new_site(domain: "alpha.example.com", owner: user)
+      _site2 = new_site(domain: "beta.example.com", owner: user)
       _rogue_site = new_site()
 
       inviter = new_user()
 
-      new_site(owner: inviter, domain: "first-another.example.com")
-      |> invite_guest(user, inviter: inviter, role: :viewer)
+      site3 = new_site(owner: inviter, domain: "alpha-another.example.com")
+      add_guest(site3, user: user, role: :viewer)
 
-      conn = get(conn, "/sites", filter_text: "first")
+      conn = get(conn, "/sites", filter_text: "alpha")
       resp = html_response(conn, 200)
 
-      assert resp =~ "first.example.com"
-      assert resp =~ "first-another.example.com"
-      refute resp =~ "second.example.com"
+      assert resp =~ "alpha.example.com"
+      assert resp =~ "alpha-another.example.com"
+      refute resp =~ "beta.example.com"
     end
 
     test "does not show empty state when filter returns empty but there are sites", %{
@@ -195,7 +242,7 @@ defmodule PlausibleWeb.SiteControllerTest do
       resp = html_response(conn, 200)
 
       refute resp =~ "second.example.com"
-      assert html_response(conn, 200) =~ "No sites found. Please search for something else."
+      assert html_response(conn, 200) =~ "No sites found. Try a different search term."
       refute html_response(conn, 200) =~ "You don't have any sites yet."
     end
 
@@ -420,7 +467,7 @@ defmodule PlausibleWeb.SiteControllerTest do
     end
 
     test "renders form again when it is a duplicate domain", %{conn: conn} do
-      insert(:site, domain: "example.com")
+      new_site(domain: "example.com")
 
       conn =
         post(conn, "/sites", %{
@@ -481,6 +528,49 @@ defmodule PlausibleWeb.SiteControllerTest do
       assert redirected_to(conn) ==
                "/example.com/installation?site_created=true&flow="
     end
+
+    for role <- [:owner, :admin, :editor] do
+      test "redirects to stats when user already has #{role} access to the duplicate domain",
+           %{
+             conn: conn,
+             user: user
+           } do
+        site = new_site(domain: "example.com")
+        add_member(site.team, user: user, role: unquote(role))
+
+        conn =
+          post(conn, "/sites", %{
+            "site" => %{
+              "domain" => "example.com",
+              "timezone" => "Europe/London"
+            }
+          })
+
+        assert redirected_to(conn) == "/example.com/"
+      end
+    end
+
+    for role <- Plausible.Teams.Membership.roles() -- [:owner, :admin, :editor] do
+      test "#{role} trying access the duplicate domain, an error is shown",
+           %{
+             conn: conn,
+             user: user
+           } do
+        site = new_site(domain: "example.com")
+        add_member(site.team, user: user, role: unquote(role))
+
+        conn =
+          post(conn, "/sites", %{
+            "site" => %{
+              "domain" => "example.com",
+              "timezone" => "Europe/London"
+            }
+          })
+
+        assert html_response(conn, 200) =~
+                 "This domain cannot be registered. Perhaps one of your colleagues registered it?"
+      end
+    end
   end
 
   describe "GET /:domain/settings/general" do
@@ -504,7 +594,9 @@ defmodule PlausibleWeb.SiteControllerTest do
 
     on_ee do
       test "renders only timezone section for a consolidated site", %{conn: conn, user: user} do
-        consolidated_view = user |> team_of() |> new_consolidated_view()
+        team = team_of(user)
+        new_site(team: team)
+        consolidated_view = new_consolidated_view(team)
         conn = get(conn, "/#{consolidated_view.domain}/settings/general")
         resp = html_response(conn, 200)
 
@@ -584,6 +676,7 @@ defmodule PlausibleWeb.SiteControllerTest do
         user: user
       } do
         team = user |> team_of()
+        new_site(team: team)
         site = new_consolidated_view(team)
         conn = get(conn, "/#{site.domain}/settings/general")
         resp = html_response(conn, 200)
@@ -773,7 +866,7 @@ defmodule PlausibleWeb.SiteControllerTest do
       conn = get(conn, "/#{site.domain}/settings/visibility")
       resp = html_response(conn, 200)
 
-      assert resp =~ "No shared links configured for this site"
+      assert resp =~ "Create your first shared link"
     end
 
     test "does not render shared links with special names", %{conn: conn, site: site} do
@@ -801,9 +894,7 @@ defmodule PlausibleWeb.SiteControllerTest do
 
       assert html_response(conn, 200) =~ "Custom event"
       assert html_response(conn, 200) =~ "Visit /register"
-    end
 
-    test "goal names are HTML safe", %{conn: conn, site: site} do
       insert(:goal, site: site, event_name: "<some_event>")
 
       conn = get(conn, "/#{site.domain}/settings/goals")
@@ -987,7 +1078,7 @@ defmodule PlausibleWeb.SiteControllerTest do
       assert element_exists?(resp, ~s|a[href^="https://accounts.google.com/o/oauth2/"]|)
 
       assert(resp =~ "Import data")
-      assert resp =~ "There are no imports yet"
+      assert resp =~ "Import your first data"
       assert resp =~ "Export data"
     end
 
@@ -1252,123 +1343,6 @@ defmodule PlausibleWeb.SiteControllerTest do
         end)
 
       assert log =~ "Google Analytics: failed to list sites: :nxdomain"
-    end
-  end
-
-  describe "PUT /:domain/settings/features/visibility/:setting" do
-    def query_conn_with_some_url(context) do
-      {:ok, Map.put(context, :conn_with_url, get(context.conn, "/some_parent_path"))}
-    end
-
-    setup [:create_user, :log_in, :query_conn_with_some_url]
-
-    for {title, setting} <- %{
-          "Goals" => :conversions_enabled,
-          "Funnels" => :funnels_enabled,
-          "Custom Properties" => :props_enabled
-        } do
-      test "can toggle #{title} with admin access", %{
-        user: user,
-        conn: conn0,
-        conn_with_url: conn_with_url
-      } do
-        site = new_site()
-        add_guest(site, user: user, role: :editor)
-
-        conn =
-          put(
-            conn0,
-            PlausibleWeb.Components.Site.Feature.target(
-              site,
-              unquote(setting),
-              conn_with_url,
-              false
-            )
-          )
-
-        assert Phoenix.Flash.get(conn.assigns.flash, :success) ==
-                 "#{unquote(title)} are now hidden from your dashboard"
-
-        assert redirected_to(conn, 302) =~ "/some_parent_path"
-
-        assert %{unquote(setting) => false} = Plausible.Sites.get_by_domain(site.domain)
-
-        conn =
-          put(
-            conn0,
-            PlausibleWeb.Components.Site.Feature.target(
-              site,
-              unquote(setting),
-              conn_with_url,
-              true
-            )
-          )
-
-        assert Phoenix.Flash.get(conn.assigns.flash, :success) ==
-                 "#{unquote(title)} are now visible again on your dashboard"
-
-        assert redirected_to(conn, 302) =~ "/some_parent_path"
-
-        assert %{unquote(setting) => true} = Plausible.Sites.get_by_domain(site.domain)
-      end
-    end
-
-    for {title, setting} <- %{
-          "Goals" => :conversions_enabled,
-          "Funnels" => :funnels_enabled,
-          "Properties" => :props_enabled
-        } do
-      test "cannot toggle #{title} with viewer access", %{
-        user: user,
-        conn: conn0,
-        conn_with_url: conn_with_url
-      } do
-        site = new_site()
-        add_guest(site, user: user, role: :viewer)
-
-        conn =
-          put(
-            conn0,
-            PlausibleWeb.Components.Site.Feature.target(
-              site,
-              unquote(setting),
-              conn_with_url,
-              false
-            )
-          )
-
-        assert conn.status == 404
-        assert conn.halted
-      end
-    end
-
-    test "setting feature visibility is idempotent", %{
-      user: user,
-      conn: conn0,
-      conn_with_url: conn_with_url
-    } do
-      site = new_site()
-      add_guest(site, user: user, role: :editor)
-
-      setting = :funnels_enabled
-
-      conn =
-        put(
-          conn0,
-          PlausibleWeb.Components.Site.Feature.target(site, setting, conn_with_url, false)
-        )
-
-      assert %{^setting => false} = Plausible.Sites.get_by_domain(site.domain)
-      assert redirected_to(conn, 302) =~ "/some_parent_path"
-
-      conn =
-        put(
-          conn0,
-          PlausibleWeb.Components.Site.Feature.target(site, setting, conn_with_url, false)
-        )
-
-      assert %{^setting => false} = Plausible.Sites.get_by_domain(site.domain)
-      assert redirected_to(conn, 302) =~ "/some_parent_path"
     end
   end
 

@@ -8,11 +8,12 @@ defmodule PlausibleWeb.PluginsAPICase do
 
   using do
     quote do
-      # The default endpoint for testing
       @endpoint PlausibleWeb.Endpoint
 
-      # Import conveniences for testing with connections
       use Plausible.TestUtils
+      use Plausible.Teams.Test
+      use Plausible
+
       import Plug.Conn
       import Phoenix.ConnTest
       import PlausibleWeb.Plugins.API.Spec, only: [spec: 0]
@@ -39,6 +40,8 @@ defmodule PlausibleWeb.PluginsAPICase do
     unless tags[:async] do
       Ecto.Adapters.SQL.Sandbox.mode(Plausible.Repo, {:shared, self()})
     end
+
+    Plausible.Test.Support.Sandbox.allow_salts_process()
 
     conn = Phoenix.ConnTest.build_conn()
 

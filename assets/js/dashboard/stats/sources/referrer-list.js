@@ -5,25 +5,34 @@ import * as metrics from '../reports/metrics'
 import { hasConversionGoalFilter } from '../../util/filters'
 import ListReport from '../reports/list'
 import ImportedQueryUnsupportedWarning from '../../stats/imported-query-unsupported-warning'
-import { useQueryContext } from '../../query-context'
+import { useDashboardStateContext } from '../../dashboard-state-context'
 import { useSiteContext } from '../../site-context'
 import { referrersDrilldownRoute } from '../../router'
 import { SourceFavicon } from './source-favicon'
+import { ReportLayout } from '../reports/report-layout'
+import { ReportHeader } from '../reports/report-header'
+import { TabButton, TabWrapper } from '../../components/tabs'
+import MoreLink from '../more-link'
+import { MoreLinkState } from '../more-link-state'
 
 const NO_REFERRER = 'Direct / None'
 
 export default function Referrers({ source }) {
-  const { query } = useQueryContext()
+  const { dashboardState } = useDashboardStateContext()
   const site = useSiteContext()
   const [skipImportedReason, setSkipImportedReason] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [moreLinkState, setMoreLinkState] = useState(MoreLinkState.LOADING)
 
-  useEffect(() => setLoading(true), [query])
+  useEffect(() => {
+    setLoading(true)
+    setMoreLinkState(MoreLinkState.LOADING)
+  }, [dashboardState])
 
   function fetchReferrers() {
     return api.get(
       url.apiPath(site, `/referrers/${encodeURIComponent(source)}`),
-      query,
+      dashboardState,
       { limit: 9 }
     )
   }
@@ -31,6 +40,11 @@ export default function Referrers({ source }) {
   function afterFetchReferrers(apiResponse) {
     setLoading(false)
     setSkipImportedReason(apiResponse.skip_imported_reason)
+    if (apiResponse.results && apiResponse.results.length > 0) {
+      setMoreLinkState(MoreLinkState.READY)
+    } else {
+      setMoreLinkState(MoreLinkState.HIDDEN)
+    }
   }
 
   function getExternalLinkUrl(referrer) {
@@ -63,34 +77,43 @@ export default function Referrers({ source }) {
   function chooseMetrics() {
     return [
       metrics.createVisitors({ meta: { plot: true } }),
-      hasConversionGoalFilter(query) && metrics.createConversionRate()
+      hasConversionGoalFilter(dashboardState) && metrics.createConversionRate()
     ].filter((metric) => !!metric)
   }
 
   return (
-    <div className="flex flex-col grow">
-      <div className="flex gap-x-1">
-        <h3 className="font-bold dark:text-gray-100">Top Referrers</h3>
-        <ImportedQueryUnsupportedWarning
-          loading={loading}
-          skipImportedReason={skipImportedReason}
+    <ReportLayout className="overflow-x-hidden">
+      <ReportHeader>
+        <div className="flex gap-x-3">
+          <TabWrapper>
+            <TabButton active={true} onClick={() => {}}>
+              Top referrers
+            </TabButton>
+          </TabWrapper>
+          <ImportedQueryUnsupportedWarning
+            loading={loading}
+            skipImportedReason={skipImportedReason}
+          />
+        </div>
+        <MoreLink
+          state={moreLinkState}
+          linkProps={{
+            path: referrersDrilldownRoute.path,
+            params: { referrer: url.maybeEncodeRouteParam(source) },
+            search: (search) => search
+          }}
         />
-      </div>
+      </ReportHeader>
       <ListReport
         fetchData={fetchReferrers}
         afterFetchData={afterFetchReferrers}
         getFilterInfo={getFilterInfo}
         keyLabel="Referrer"
         metrics={chooseMetrics()}
-        detailsLinkProps={{
-          path: referrersDrilldownRoute.path,
-          params: { referrer: url.maybeEncodeRouteParam(source) },
-          search: (search) => search
-        }}
         getExternalLinkUrl={getExternalLinkUrl}
         renderIcon={renderIcon}
         color="bg-blue-50"
       />
-    </div>
+    </ReportLayout>
   )
 }

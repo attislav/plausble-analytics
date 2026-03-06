@@ -1,6 +1,5 @@
 defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
   use PlausibleWeb.ConnCase
-  use Plausible.Teams.Test
 
   @user_id Enum.random(1000..9999)
 
@@ -1349,11 +1348,10 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
         build(:pageview, timestamp: ~N[2021-01-08 23:59:00])
       ])
 
-      Plausible.Stats.Query.Test.fix_now(~U[2021-01-08 08:05:00Z])
-
       conn =
-        get(
-          conn,
+        conn
+        |> Plug.Conn.put_private(:now, ~U[2021-01-08 08:05:00Z])
+        |> get(
           "/api/stats/#{site.domain}/main-graph?period=day&metric=visitors&date=2021-01-08&interval=hour"
         )
 
@@ -1381,11 +1379,10 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
         build(:pageview, timestamp: ~N[2021-01-31 00:00:00])
       ])
 
-      Plausible.Stats.Query.Test.fix_now(~U[2021-01-07 12:00:00Z])
-
       conn =
-        get(
-          conn,
+        conn
+        |> Plug.Conn.put_private(:now, ~U[2021-01-07 12:00:00Z])
+        |> get(
           "/api/stats/#{site.domain}/main-graph?period=month&metric=visitors&date=2021-01-07&interval=day"
         )
 
@@ -1413,11 +1410,10 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
         build(:pageview, timestamp: ~N[2021-02-09 00:00:00])
       ])
 
-      Plausible.Stats.Query.Test.fix_now(~U[2021-02-07 12:00:00Z])
-
       conn =
-        get(
-          conn,
+        conn
+        |> Plug.Conn.put_private(:now, ~U[2021-02-07 12:00:00Z])
+        |> get(
           "/api/stats/#{site.domain}/main-graph?period=year&metric=visitors&date=2021-02-07&interval=month"
         )
 
@@ -1595,11 +1591,10 @@ defmodule PlausibleWeb.Api.StatsController.MainGraphTest do
         build(:pageview, timestamp: ~N[2021-01-08 23:59:00])
       ])
 
-      Plausible.Stats.Query.Test.fix_now(~U[2021-01-08 08:05:00Z])
-
       conn =
-        get(
-          conn,
+        conn
+        |> Plug.Conn.put_private(:now, ~U[2021-01-08 08:05:00Z])
+        |> get(
           "/api/stats/#{site.domain}/main-graph?period=day&metric=visitors&date=2021-01-08&interval=hour&comparison=previous_period"
         )
 
