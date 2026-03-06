@@ -8,12 +8,14 @@ export function ChangeArrow({
   change,
   metric,
   className,
-  hideNumber
+  hideNumber,
+  absoluteChange
 }: {
   change: number
   metric: Metric
   className: string
   hideNumber?: boolean
+  absoluteChange?: number
 }) {
   let icon = null
   const arrowClassName = classNames(
@@ -27,9 +29,14 @@ export function ChangeArrow({
     icon = <ArrowDownRightIcon className={arrowClassName} />
   }
 
-  const formattedChange = hideNumber
-    ? null
-    : `${icon ? ' ' : ''}${numberShortFormatter(Math.abs(change))}%`
+  let formattedChange = null
+  if (!hideNumber) {
+    if (absoluteChange !== undefined) {
+      formattedChange = `${icon ? ' ' : ''}${absoluteChange > 0 ? '+' : '-'}${numberShortFormatter(Math.abs(absoluteChange))}`
+    } else {
+      formattedChange = `${icon ? ' ' : ''}${numberShortFormatter(Math.abs(change))}%`
+    }
+  }
 
   return (
     <span className={className} data-testid="change-arrow">

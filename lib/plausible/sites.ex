@@ -101,6 +101,31 @@ defmodule Plausible.Sites do
     end
   end
 
+  @spec set_tags(Auth.User.t(), Site.t(), [String.t()]) :: {:ok, Site.t()} | {:error, Ecto.Changeset.t()}
+  def set_tags(user, site, tags) when is_list(tags) do
+    site = get_for_user!(user, site.domain, [:owner, :admin])
+
+    site
+    |> Site.tag_changeset(%{tags: tags})
+    |> Repo.update()
+  end
+
+  @spec add_tag(Auth.User.t(), Site.t(), String.t()) :: {:ok, Site.t()} | {:error, Ecto.Changeset.t()}
+  def add_tag(user, site, tag) when is_binary(tag) do
+    site = get_for_user!(user, site.domain, [:owner, :admin])
+    current_tags = site.tags || []
+    new_tags = Enum.uniq(current_tags ++ [tag])
+    set_tags(user, site, new_tags)
+  end
+
+  @spec remove_tag(Auth.User.t(), Site.t(), String.t()) :: {:ok, Site.t()} | {:error, Ecto.Changeset.t()}
+  def remove_tag(user, site, tag) when is_binary(tag) do
+    site = get_for_user!(user, site.domain, [:owner, :admin])
+    current_tags = site.tags || []
+    new_tags = List.delete(current_tags, tag)
+    set_tags(user, site, new_tags)
+  end
+
   @pins_limit 9
 
   defp check_user_pin_limit(_user, nil), do: :ok
