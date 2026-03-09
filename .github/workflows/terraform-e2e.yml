@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   terraform:
+    if: github.repository == 'plausible/analytics'
     concurrency: terraform_checkly
     defaults:
       run:

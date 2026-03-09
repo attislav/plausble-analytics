@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   test:
+    if: github.repository == 'plausible/analytics'
     timeout-minutes: 15
     runs-on: ubuntu-latest
     strategy:

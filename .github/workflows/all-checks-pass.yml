@@ -6,6 +6,7 @@ on:
 
 jobs:
   enforce-all-checks:
+    if: github.repository == 'plausible/analytics'
     runs-on: ubuntu-latest
     permissions:
       checks: read

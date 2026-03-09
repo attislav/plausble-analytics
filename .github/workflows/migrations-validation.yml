@@ -8,6 +8,7 @@ on:
 
 jobs:
   validate:
+    if: github.repository == 'plausible/analytics'
     name: App code does not change at the same time
     runs-on: ubuntu-latest
 

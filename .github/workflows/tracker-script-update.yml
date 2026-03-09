@@ -9,6 +9,7 @@ on:
 
 jobs:
   tracker-script-update:
+    if: github.repository == 'plausible/analytics'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write

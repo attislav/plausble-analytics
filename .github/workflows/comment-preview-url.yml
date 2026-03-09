@@ -12,7 +12,7 @@ env:
 
 jobs:
   comment:
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'preview') }}
+    if: github.repository == 'plausible/analytics' && contains(github.event.pull_request.labels.*.name, 'preview')
     runs-on: ubuntu-latest
     steps:
       - name: Comment with preview URL

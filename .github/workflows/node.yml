@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.repository == 'plausible/analytics'
     name: Build and test
     runs-on: ubuntu-latest
 
