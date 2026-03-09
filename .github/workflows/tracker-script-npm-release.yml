@@ -12,10 +12,11 @@ jobs:
       pull-requests: read
       contents: read
     if: >-
-      ${{ github.event.pull_request.merged == true && (
+      github.repository == 'plausible/analytics' &&
+      github.event.pull_request.merged == true && (
       contains(github.event.pull_request.labels.*.name, 'tracker-release: patch') ||
       contains(github.event.pull_request.labels.*.name, 'tracker-release: minor') ||
-      contains(github.event.pull_request.labels.*.name, 'tracker-release: major') ) }}
+      contains(github.event.pull_request.labels.*.name, 'tracker-release: major') )
 
     steps:
       - name: Checkout the repository

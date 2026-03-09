@@ -16,6 +16,7 @@ env:
 
 jobs:
   build:
+    if: github.repository == 'plausible/analytics'
     name: "Build and test (${{ matrix.mix_env }}, ${{ matrix.postgres_image }})"
     runs-on: ubuntu-latest
     strategy:
@@ -114,6 +115,7 @@ jobs:
           MIX_TEST_PARTITION: ${{ matrix.mix_test_partition }}
 
   e2e:
+    if: github.repository == 'plausible/analytics'
     name: End-to-end tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -226,7 +228,7 @@ jobs:
           retention-days: 1
 
   merge-sharded-e2e-test-report:
-    if: ${{ !cancelled() }}
+    if: github.repository == 'plausible/analytics' && !cancelled()
     needs: [e2e]
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -252,6 +254,7 @@ jobs:
         run: npx playwright merge-reports --reporter list ../all-e2e-blob-reports
 
   static:
+    if: github.repository == 'plausible/analytics'
     name: Static checks (format, credo, dialyzer)
     env:
       MIX_ENV: test
