@@ -8,7 +8,8 @@ defmodule Plausible.Teams.Sites do
   alias Plausible.Site
   alias Plausible.Teams
 
-  @type list_opt() :: {:filter_by_domain, String.t()} | {:team, Teams.Team.t() | nil}
+  @type list_opt() ::
+          {:filter_by_domain, String.t()} | {:filter_by_tag, String.t()} | {:team, Teams.Team.t() | nil}
 
   @role_type Plausible.Teams.Invitation.__schema__(:type, :role)
 
@@ -100,6 +101,7 @@ defmodule Plausible.Teams.Sites do
       ]
     )
     |> maybe_filter_by_domain(domain_filter)
+    |> maybe_filter_by_tag(Keyword.get(opts, :filter_by_tag))
     |> Repo.paginate(pagination_params)
   end
 
@@ -109,6 +111,12 @@ defmodule Plausible.Teams.Sites do
   end
 
   defp maybe_filter_by_domain(query, _), do: query
+
+  defp maybe_filter_by_tag(query, tag) when is_binary(tag) and byte_size(tag) >= 1 do
+    where(query, [site: s], ^tag in s.tags)
+  end
+
+  defp maybe_filter_by_tag(query, _), do: query
 
   @spec accessible_by(Auth.User.t(), Teams.Team.t() | nil) :: Ecto.Query.t()
   def accessible_by(user, team) do
