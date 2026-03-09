@@ -161,6 +161,22 @@ defmodule Plausible.Sites do
 
   defdelegate list(user, pagination_params, opts \\ []), to: Plausible.Teams.Sites
 
+  @spec all_tags(Auth.User.t(), Teams.Team.t() | nil) :: [String.t()]
+  def all_tags(user, team) do
+    accessible = Teams.Sites.accessible_by(user, team)
+
+    from(s in Site,
+      join: a in subquery(accessible),
+      on: s.id == a.site_id,
+      where: s.tags != ^[],
+      select: s.tags
+    )
+    |> Repo.all()
+    |> List.flatten()
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
   def list_people(site) do
     owner_memberships =
       from(

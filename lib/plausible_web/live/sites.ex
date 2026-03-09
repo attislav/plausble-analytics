@@ -18,7 +18,7 @@ defmodule PlausibleWeb.Live.Sites do
     user = socket.assigns.current_user
 
     uri =
-      ("/sites?" <> URI.encode_query(Map.take(params, ["filter_text"])))
+      ("/sites?" <> URI.encode_query(Map.take(params, ["filter_text", "tag"])))
       |> URI.new!()
 
     socket =
@@ -26,6 +26,8 @@ defmodule PlausibleWeb.Live.Sites do
       |> assign(:uri, uri)
       |> assign(:sparklines, %{})
       |> assign(:filter_text, String.trim(params["filter_text"] || ""))
+      |> assign(:filter_tag, params["tag"] || nil)
+      |> assign(:available_tags, [])
       |> assign(:tag_modal_open, false)
       |> assign(:selected_site_for_tags, nil)
       |> assign(:tag_input, "")
@@ -41,8 +43,10 @@ defmodule PlausibleWeb.Live.Sites do
     socket =
       socket
       |> assign(:params, params)
+      |> assign(:filter_tag, params["tag"] || nil)
       |> load_sites()
       |> load_invitations()
+      |> load_available_tags()
       |> assign_new(:has_sites?, fn %{current_user: current_user} ->
         Teams.Users.has_sites?(current_user, include_pending?: true)
       end)
@@ -87,7 +91,7 @@ defmodule PlausibleWeb.Live.Sites do
   end
 
   def render(assigns) do
-    assigns = assign(assigns, :searching?, String.trim(assigns.filter_text) != "")
+    assigns = assign(assigns, :searching?, String.trim(assigns.filter_text) != "" or assigns.filter_tag != nil)
 
     ~H"""
     <.flash_messages flash={@flash} />
@@ -152,6 +156,26 @@ defmodule PlausibleWeb.Live.Sites do
         </a>
       </div>
 
+      <div :if={@available_tags != []} class="flex flex-wrap items-center gap-2 mt-3">
+        <span class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Tags:</span>
+        <%= for tag <- @available_tags do %>
+          <button
+            phx-click="filter-by-tag"
+            phx-value-tag={tag}
+            class={[
+              "inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-colors duration-150",
+              if(@filter_tag == tag,
+                do: "bg-indigo-600 text-white",
+                else: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-200 hover:bg-indigo-200 dark:hover:bg-indigo-800"
+              )
+            ]}
+          >
+            {tag}
+            <Heroicons.x_mark :if={@filter_tag == tag} class="size-3 ml-1" />
+          </button>
+        <% end %>
+      </div>
+
       <div class="flex flex-col gap-y-4 my-4">
         <PlausibleWeb.Team.Notice.team_invitations team_invitations={@team_invitations} />
         <PlausibleWeb.Team.Notice.site_ownership_invitations
@@ -162,7 +186,7 @@ defmodule PlausibleWeb.Live.Sites do
       </div>
 
       <p :if={@searching? and @sites.entries == []} class="mt-4 dark:text-gray-100 text-center">
-        No sites found. Try a different search term.
+        No sites found. Try a different search term or tag filter.
       </p>
       <div
         :if={@is_empty_state?}
@@ -895,6 +919,18 @@ defmodule PlausibleWeb.Live.Sites do
     {:noreply, socket}
   end
 
+  def handle_event("filter-by-tag", %{"tag" => tag}, socket) do
+    current_tag = socket.assigns.filter_tag
+    new_tag = if current_tag == tag, do: nil, else: tag
+
+    socket =
+      socket
+      |> reset_pagination()
+      |> set_filter_tag(new_tag)
+
+    {:noreply, socket}
+  end
+
   def handle_event("reset-filter-text", _params, socket) do
     socket =
       socket
@@ -947,6 +983,7 @@ defmodule PlausibleWeb.Live.Sites do
             |> put_live_flash(:success, "Tag added successfully")
             |> assign(:tag_input, "")
             |> load_sites()
+            |> load_available_tags()
 
           {:error, changeset} ->
             error_message =
@@ -972,6 +1009,7 @@ defmodule PlausibleWeb.Live.Sites do
           socket
           |> put_live_flash(:success, "Tag removed successfully")
           |> load_sites()
+          |> load_available_tags()
 
         {:error, _changeset} ->
           put_live_flash(socket, :error, "Failed to remove tag")
@@ -1022,6 +1060,7 @@ defmodule PlausibleWeb.Live.Sites do
     sites =
       Sites.list(assigns.current_user, assigns.params,
         filter_by_domain: assigns.filter_text,
+        filter_by_tag: assigns.filter_tag,
         team: assigns.current_team
       )
 
@@ -1049,6 +1088,30 @@ defmodule PlausibleWeb.Live.Sites do
     defdelegate ensure_can_take_ownership(site, team), to: Teams.Invitations
   else
     defp ensure_can_take_ownership(_site, _team), do: :ok
+  end
+
+  defp load_available_tags(%{assigns: assigns} = socket) do
+    tags = Sites.all_tags(assigns.current_user, assigns.current_team)
+    assign(socket, :available_tags, tags)
+  end
+
+  defp set_filter_tag(socket, tag) do
+    uri = socket.assigns.uri
+
+    uri_params =
+      uri.query
+      |> URI.decode_query()
+      |> then(fn params ->
+        if tag, do: Map.put(params, "tag", tag), else: Map.delete(params, "tag")
+      end)
+      |> URI.encode_query()
+
+    uri = %{uri | query: uri_params}
+
+    socket
+    |> assign(:filter_tag, tag)
+    |> assign(:uri, uri)
+    |> push_patch(to: URI.to_string(uri), replace: true)
   end
 
   defp set_filter_text(socket, filter_text) do
