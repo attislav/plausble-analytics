@@ -1,0 +1,38 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # Täglich um 6:00 UTC
+  workflow_dispatch: # Manuell auslösbar
+
+jobs:
+  sync:
+    if: github.repository != 'plausible/analytics'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/plausible/analytics.git
+          git fetch upstream master
+
+      - name: Merge upstream into fork
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git merge upstream/master --no-edit || {
+            echo "::error::Merge conflict detected! Manual resolution required."
+            git merge --abort
+            exit 1
+          }
+
+      - name: Push changes
+        run: git push origin master
