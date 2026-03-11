@@ -827,12 +827,11 @@ defmodule PlausibleWeb.Live.Sites do
               <% end %>
             </div>
 
-            <form phx-submit="add-tag" class="flex gap-2">
+            <form phx-submit="add-tag" phx-change="update-tag-input" class="flex gap-2">
               <input
                 type="text"
                 name="tag"
                 value={@tag_input}
-                phx-change="update-tag-input"
                 placeholder="Add new tag..."
                 class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 rounded-md"
               />
@@ -970,7 +969,7 @@ defmodule PlausibleWeb.Live.Sites do
     {:noreply, socket}
   end
 
-  def handle_event("update-tag-input", %{"tag" => tag}, socket) do
+  def handle_event("update-tag-input", %{"tag" => tag} = _params, socket) do
     {:noreply, assign(socket, :tag_input, tag)}
   end
 
@@ -982,10 +981,11 @@ defmodule PlausibleWeb.Live.Sites do
         site = Sites.get_by_domain!(domain)
 
         case Sites.add_tag(socket.assigns.current_user, site, tag) do
-          {:ok, _updated_site} ->
+          {:ok, updated_site} ->
             socket
             |> put_live_flash(:success, "Tag added successfully")
             |> assign(:tag_input, "")
+            |> assign(:selected_site_for_tags, updated_site)
             |> load_sites()
             |> load_available_tags()
 
@@ -1009,9 +1009,10 @@ defmodule PlausibleWeb.Live.Sites do
 
     socket =
       case Sites.remove_tag(socket.assigns.current_user, site, tag) do
-        {:ok, _updated_site} ->
+        {:ok, updated_site} ->
           socket
           |> put_live_flash(:success, "Tag removed successfully")
+          |> assign(:selected_site_for_tags, updated_site)
           |> load_sites()
           |> load_available_tags()
 
