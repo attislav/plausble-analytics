@@ -780,6 +780,10 @@ defmodule PlausibleWeb.Live.Sites do
     """
   end
 
+  on_ce do
+    defp invitation_modal(assigns), do: ~H""
+  end
+
   attr(:site, Plausible.Site, required: true)
   attr(:tag_input, :string, required: true)
 
