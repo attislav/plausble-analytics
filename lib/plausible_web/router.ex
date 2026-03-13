@@ -358,7 +358,7 @@ defmodule PlausibleWeb.Router do
   # discover site_ids/domains without manual configuration.
   on_ce do
     scope "/api/v1/sites", PlausibleWeb.Api,
-      assigns: %{api_scope: "stats:read:*", api_context: nil} do
+      assigns: %{api_scope: "sites:read:*", api_context: nil} do
       pipe_through [:public_api, PlausibleWeb.Plugs.AuthorizePublicAPI]
 
       get "/", ExternalSitesLiteController, :index
