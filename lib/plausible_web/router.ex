@@ -354,6 +354,17 @@ defmodule PlausibleWeb.Router do
     end
   end
 
+  # Self-host / CE: provide a minimal sites listing endpoint so external tools can
+  # discover site_ids/domains without manual configuration.
+  on_ce do
+    scope "/api/v1/sites", PlausibleWeb.Api,
+      assigns: %{api_scope: "stats:read:*"} do
+      pipe_through [:public_api, PlausibleWeb.Plugs.AuthorizePublicAPI]
+
+      get "/", ExternalSitesLiteController, :index
+    end
+  end
+
   on_ee do
     scope "/api/v1/sites", PlausibleWeb.Api do
       pipe_through :public_api
